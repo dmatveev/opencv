@@ -25,17 +25,17 @@ const     cv::Scalar kClrWhite (255, 255, 255);
 const     cv::Scalar kClrGreen (  0, 255,   0);
 const     cv::Scalar kClrYellow(  0, 255, 255);
 
-constexpr float      kFaceConfThreshold = 0.7f;
+constexpr float      kConfThresh   = 0.7f;
 
-const     cv::Size   kGaussKernelSize(5, 5);
-constexpr double     kGaussSigma      = 0.0;
-constexpr int        kBilatDiameter   = 9;
-constexpr double     kBilatSigmaColor = 30.0;
-constexpr double     kBilatSigmaSpace = 30.0;
-constexpr int        kUnsharpSigma    = 3;
-constexpr float      kUnsharpStrength = 0.7f;
-constexpr int        kAngDelta        = 1;
-constexpr bool       kClosedLine      = true;
+const     cv::Size   kGKernelSize(5, 5);
+constexpr double     kGSigma       = 0.0;
+constexpr int        kBSize        = 9;
+constexpr double     kBSigmaCol    = 30.0;
+constexpr double     kBSigmaSp     = 30.0;
+constexpr int        kUnshSigma    = 3;
+constexpr float      kUnshStrength = 0.7f;
+constexpr int        kAngDelta     = 1;
+constexpr bool       kClosedLine   = true;
 
 const size_t kNumPointsInHalfEllipse = 180 / config::kAngDelta + 1;
 } // namespace config
@@ -45,6 +45,7 @@ namespace
 using VectorROI = std::vector<cv::Rect>;
 using GArrayROI = cv::GArray<cv::Rect>;
 using Contour   = std::vector<cv::Point>;
+using Landmarks = std::vector<cv::Point>;
 
 
 // Wrapper function
@@ -74,23 +75,19 @@ std::string getWeightsPath(const std::string &mdlXMLPath) // mdlXMLPath =
 
 namespace custom
 {
-using TplPtsFaceElements_Jaw = std::tuple<cv::GArray<std::vector<cv::Point>>,
+using TplPtsFaceElements_Jaw = std::tuple<cv::GArray<Landmarks>,
                                           cv::GArray<Contour>>;
 
 // Wrapper-functions
-inline cv::Rect getFaceRect(const cv::Point2f &ptfTopLeft,
-                            const cv::Point2f &ptfBotRight,
-                            const cv::Size &imgSize);
-inline cv::Point getRigthCoordinates(const cv::Point2f &ptFloat,
-                                     const cv::Rect &faceCoordinates);
 inline int getLineInclinationAngleDegrees(const cv::Point &ptLeft,
                                           const cv::Point &ptRight);
 inline Contour getForeheadEllipse(const cv::Point &ptJawLeft,
                                   const cv::Point &ptJawRight,
                                   const cv::Point &ptJawMiddle,
-                                  const size_t capacity);
-inline Contour getEyeEllipse(const cv::Point &ptLeft, const cv::Point &ptRight,
-                             const size_t capacity);
+                                  const size_t     capacity);
+inline Contour getEyeEllipse(const cv::Point &ptLeft,
+                             const cv::Point &ptRight,
+                             const size_t     capacity);
 inline Contour getPatchedEllipse(const cv::Point &ptLeft,
                                  const cv::Point &ptRight,
                                  const cv::Point &ptUp,
@@ -98,22 +95,27 @@ inline Contour getPatchedEllipse(const cv::Point &ptLeft,
 
 // Networks
 //! [net_decl]
-G_API_NET(FaceDetector, <cv::GMat(cv::GMat)>, "face_detector");
-G_API_NET(FacialLandmarksDetector, <cv::GMat(cv::GMat)>, "landm_detector");
+G_API_NET(FaceDetector,  <cv::GMat(cv::GMat)>, "face_detector");
+G_API_NET(LandmDetector, <cv::GMat(cv::GMat)>, "landm_detector");
 //! [net_decl]
 
 // Function kernels
-G_TYPED_KERNEL(GBilateralFilter, <cv::GMat(cv::GMat,int,double,double)>,
+G_TYPED_KERNEL(GBilatFilter, <cv::GMat(cv::GMat,int,double,double)>,
                "custom.faceb12n.bilateralFilter")
 {
-    static cv::GMatDesc outMeta(cv::GMatDesc in, int, double, double)
-    { return in; }
+    static cv::GMatDesc outMeta(cv::GMatDesc in, int,double,double)
+    {
+        return in;
+    }
 };
 
 G_TYPED_KERNEL(GLaplacian, <cv::GMat(cv::GMat,int)>,
                "custom.faceb12n.Laplacian")
 {
-    static cv::GMatDesc outMeta(cv::GMatDesc in, int) { return in; }
+    static cv::GMatDesc outMeta(cv::GMatDesc in, int)
+    {
+        return in;
+    }
 };
 
 //! [kern_decl]
@@ -121,7 +123,9 @@ G_TYPED_KERNEL(GFillPolyGContours, <cv::GMat(cv::GMat,cv::GArray<Contour>)>,
                "custom.faceb12n.fillPolyGContours")
 {
     static cv::GMatDesc outMeta(cv::GMatDesc in, cv::GArrayDesc)
-    { return in.withType(CV_8U, 1); }
+    {
+        return in.withType(CV_8U, 1);
+    }
 };
 //! [kern_decl]
 
@@ -130,22 +134,27 @@ G_TYPED_KERNEL(GPolyLines, <cv::GMat(cv::GMat,cv::GArray<Contour>,bool,
                "custom.faceb12n.polyLines")
 {
     static cv::GMatDesc outMeta(cv::GMatDesc in, cv::GArrayDesc,bool,cv::Scalar)
-    { return in; }
+    {
+        return in;
+    }
 };
 
 G_TYPED_KERNEL(GRectangle, <cv::GMat(cv::GMat,GArrayROI,cv::Scalar)>,
                "custom.faceb12n.rectangle")
 {
-    static cv::GMatDesc outMeta(cv::GMatDesc in, cv::GArrayDesc, cv::Scalar)
-    { return in; }
+    static cv::GMatDesc outMeta(cv::GMatDesc in, cv::GArrayDesc,cv::Scalar)
+    {
+        return in;
+    }
 };
 
 G_TYPED_KERNEL(GFacePostProc, <GArrayROI(cv::GMat,cv::GMat,float)>,
                "custom.faceb12n.faceDetectPostProc")
 {
-    static cv::GArrayDesc outMeta(const cv::GMatDesc&, const cv::GMatDesc&,
-                                  float)
-    { return cv::empty_array_desc(); }
+    static cv::GArrayDesc outMeta(const cv::GMatDesc&,const cv::GMatDesc&,float)
+    {
+        return cv::empty_array_desc();
+    }
 };
 
 G_TYPED_KERNEL_M(GLandmPostProc, <TplPtsFaceElements_Jaw(cv::GArray<cv::GMat>,
@@ -153,21 +162,21 @@ G_TYPED_KERNEL_M(GLandmPostProc, <TplPtsFaceElements_Jaw(cv::GArray<cv::GMat>,
                  "custom.faceb12n.landmDetectPostProc")
 {
     static std::tuple<cv::GArrayDesc,cv::GArrayDesc> outMeta(
-                const cv::GArrayDesc&, const cv::GArrayDesc&)
-    { return std::make_tuple(cv::empty_array_desc(), cv::empty_array_desc()); }
+                const cv::GArrayDesc&,const cv::GArrayDesc&)
+    {
+        return std::make_tuple(cv::empty_array_desc(), cv::empty_array_desc());
+    }
 };
 
 //! [kern_m_decl]
-using TplFaces_FaceElements  = std::tuple<cv::GArray<Contour>,
-                                          cv::GArray<Contour>>;
-G_TYPED_KERNEL_M(GGetContours, <TplFaces_FaceElements
-                                (cv::GArray<std::vector<cv::Point>>,
-                                 cv::GArray<Contour>)>,
+using TplFaces_FaceElements  = std::tuple<cv::GArray<Contour>, cv::GArray<Contour>>;
+G_TYPED_KERNEL_M(GGetContours, <TplFaces_FaceElements (cv::GArray<Landmarks>, cv::GArray<Contour>)>,
                  "custom.faceb12n.getContours")
 {
-    static std::tuple<cv::GArrayDesc,cv::GArrayDesc> outMeta(
-                const cv::GArrayDesc&, const cv::GArrayDesc&)
-    { return std::make_tuple(cv::empty_array_desc(), cv::empty_array_desc()); }
+    static std::tuple<cv::GArrayDesc,cv::GArrayDesc> outMeta(const cv::GArrayDesc&,const cv::GArrayDesc&)
+    {
+        return std::make_tuple(cv::empty_array_desc(), cv::empty_array_desc());
+    }
 };
 //! [kern_m_decl]
 
@@ -175,20 +184,28 @@ G_TYPED_KERNEL_M(GGetContours, <TplFaces_FaceElements
 // OCV_Kernels
 // This kernel applies Bilateral filter to an input src with default
 //  "cv::bilateralFilter" border argument
-GAPI_OCV_KERNEL(GCPUBilateralFilter, custom::GBilateralFilter)
+GAPI_OCV_KERNEL(GCPUBilateralFilter, custom::GBilatFilter)
 {
-    static void run(const cv::Mat &src, const int diameter,
-                    const double sigmaColor,
-                    const double sigmaSpace, cv::Mat &out)
-    { cv::bilateralFilter(src, out, diameter, sigmaColor, sigmaSpace); }
+    static void run(const cv::Mat &src,
+                    const int      diameter,
+                    const double   sigmaColor,
+                    const double   sigmaSpace,
+                          cv::Mat &out)
+    {
+        cv::bilateralFilter(src, out, diameter, sigmaColor, sigmaSpace);
+    }
 };
 
 // This kernel applies Laplace operator to an input src with default
 //  "cv::Laplacian" arguments
 GAPI_OCV_KERNEL(GCPULaplacian, custom::GLaplacian)
 {
-    static void run(const cv::Mat &src, const int ddepth, cv::Mat &out)
-    { cv::Laplacian(src, out, ddepth); }
+    static void run(const cv::Mat &src,
+                    const int      ddepth,
+                          cv::Mat &out)
+    {
+        cv::Laplacian(src, out, ddepth);
+    }
 };
 
 // This kernel draws given white filled contours "cnts" on a clear Mat "out"
@@ -199,8 +216,9 @@ GAPI_OCV_KERNEL(GCPULaplacian, custom::GLaplacian)
 //! [kern_impl]
 GAPI_OCV_KERNEL(GCPUFillPolyGContours, custom::GFillPolyGContours)
 {
-    static void run(const cv::Mat &, const std::vector<Contour> &cnts,
-                    cv::Mat &out)
+    static void run(const cv::Mat              &,
+                    const std::vector<Contour> &cnts,
+                          cv::Mat              &out)
     {
         out = cv::Scalar(0);
         cv::fillPoly(out, cnts, config::kClrWhite);
@@ -212,8 +230,11 @@ GAPI_OCV_KERNEL(GCPUFillPolyGContours, custom::GFillPolyGContours)
 //  arguments
 GAPI_OCV_KERNEL(GCPUPolyLines, custom::GPolyLines)
 {
-    static void run(const cv::Mat &src, const std::vector<Contour> &cnts,
-                    const bool isClosed, const cv::Scalar &color, cv::Mat &out)
+    static void run(const cv::Mat              &src,
+                    const std::vector<Contour> &cnts,
+                    const bool                  isClosed,
+                    const cv::Scalar           &color,
+                          cv::Mat              &out)
     {
         src.copyTo(out);
         cv::polylines(out, cnts, isClosed, color);
@@ -224,12 +245,16 @@ GAPI_OCV_KERNEL(GCPUPolyLines, custom::GPolyLines)
 //  "cv::rectangle" arguments
 GAPI_OCV_KERNEL(GCPURectangle, custom::GRectangle)
 {
-    static void run(const cv::Mat &src, const VectorROI &vctFaceBoxes,
-                    const cv::Scalar &color, cv::Mat &out)
+    static void run(const cv::Mat    &src,
+                    const VectorROI  &vctFaceBoxes,
+                    const cv::Scalar &color,
+                          cv::Mat    &out)
     {
         src.copyTo(out);
         for (const cv::Rect &box : vctFaceBoxes)
+        {
             cv::rectangle(out, box, color);
+        }
     }
 };
 
@@ -243,34 +268,37 @@ GAPI_OCV_KERNEL(GCPURectangle, custom::GRectangle)
 //  of detected faces' rects:
 GAPI_OCV_KERNEL(GCPUFacePostProc, GFacePostProc)
 {
-    static void run(const cv::Mat &inDetectResult, const cv::Mat &inFrame,
-                    const float faceConfThreshold, VectorROI &outFaces)
+    static void run(const cv::Mat   &inDetectResult,
+                    const cv::Mat   &inFrame,
+                    const float      faceConfThreshold,
+                          VectorROI &outFaces)
     {
-        const cv::Size imgSize = inFrame.size();
+        const int kObjectSize  = 7;
+        const int imgCols = inFrame.size().width;
+        const int imgRows = inFrame.size().height;
+        const cv::Rect borders({0, 0}, inFrame.size());
         outFaces.clear();
-        const int numOfDetections = inDetectResult.size[2];
+        const int    numOfDetections = inDetectResult.size[2];
+        const float *data            = inDetectResult.ptr<float>();
         for (int i = 0; i < numOfDetections; i++)
         {
-            const float faceId         = inDetectResult.at<float>
-                                                      (cv::Vec<int,4>(0,0,i,0));
-            const float faceConfidence = inDetectResult.at<float>
-                                                      (cv::Vec<int,4>(0,0,i,2));
+            const float faceId         = data[i * kObjectSize + 0];
             if (faceId < 0.f)  // indicates the end of detections
             {
                 break;
             }
+            const float faceConfidence = data[i * kObjectSize + 2];
             if (faceConfidence > faceConfThreshold)
             {
-                const cv::Point2f ptfTopLeft( inDetectResult.at<float>
-                                              (cv::Vec<int,4>(0,0,i,3)),
-                                              inDetectResult.at<float>
-                                              (cv::Vec<int,4>(0,0,i,4)));
-                const cv::Point2f ptfBotRight(inDetectResult.at<float>
-                                              (cv::Vec<int,4>(0,0,i,5)),
-                                              inDetectResult.at<float>
-                                              (cv::Vec<int,4>(0,0,i,6)));
-                outFaces.push_back(getFaceRect(ptfTopLeft, ptfBotRight,
-                                               imgSize));
+                const float left   = data[i * kObjectSize + 3];
+                const float top    = data[i * kObjectSize + 4];
+                const float right  = data[i * kObjectSize + 5];
+                const float bottom = data[i * kObjectSize + 6];
+                cv::Point tl(toIntRounded(left   * imgCols),
+                             toIntRounded(top    * imgRows));
+                cv::Point br(toIntRounded(right  * imgCols),
+                             toIntRounded(bottom * imgRows));
+                outFaces.push_back(cv::Rect(tl, br) & borders);
             }
         }
     }
@@ -281,10 +309,10 @@ GAPI_OCV_KERNEL(GCPUFacePostProc, GFacePostProc)
 //  face elements' Points and a vector of vectors of jaw's Points:
 GAPI_OCV_KERNEL(GCPULandmPostProc, GLandmPostProc)
 {
-    static void run(const std::vector<cv::Mat> &vctDetectResults,
-                    const VectorROI &vctRects,
-                    std::vector<std::vector<cv::Point>> &vctPtsFaceElems,
-                    std::vector<Contour> &vctCntJaw)
+    static void run(const std::vector<cv::Mat>   &vctDetectResults,
+                    const VectorROI              &vctRects,
+                          std::vector<Landmarks> &vctPtsFaceElems,
+                          std::vector<Contour>   &vctCntJaw)
     {
         // There are 35 landmarks given by the default detector for each face
         //  in a frame; the first 18 of them are face elements (eyes, eyebrows,
@@ -301,21 +329,22 @@ GAPI_OCV_KERNEL(GCPULandmPostProc, GLandmPostProc)
         vctPtsFaceElems.reserve(numFaces);
         vctCntJaw.reserve(numFaces);
 
-        std::vector<cv::Point> ptsFaceElems;
-        Contour cntJaw;
+        Landmarks ptsFaceElems;
+        Contour   cntJaw;
         ptsFaceElems.reserve(kNumFaceElems);
         cntJaw.reserve(kNumTotal - kNumFaceElems);
 
         for (size_t i = 0; i < numFaces; i++)
         {
+            const float *data = vctDetectResults[i].ptr<float>();
             // The face elements points:
             ptsFaceElems.clear();
             for (int j = 0; j < kNumFaceElems * 2; j += 2)
             {
-                cv::Point pt = getRigthCoordinates(
-                            cv::Point2f(vctDetectResults[i].at<float>(j),
-                                        vctDetectResults[i].at<float>(j + 1)),
-                            vctRects[i]);
+                cv::Point pt =
+                        cv::Point(toIntRounded(data[j]   * vctRects[i].width),
+                                  toIntRounded(data[j+1] * vctRects[i].height))
+                        + vctRects[i].tl();
                 ptsFaceElems.push_back(pt);
             }
             vctPtsFaceElems.push_back(ptsFaceElems);
@@ -324,10 +353,10 @@ GAPI_OCV_KERNEL(GCPULandmPostProc, GLandmPostProc)
             cntJaw.clear();
             for(int j = kNumFaceElems * 2; j < kNumTotal * 2; j += 2)
             {
-                cv::Point pt = getRigthCoordinates(
-                            cv::Point2f(vctDetectResults[i].at<float>(j),
-                                        vctDetectResults[i].at<float>(j + 1)),
-                            vctRects[i]);
+                cv::Point pt =
+                        cv::Point(toIntRounded(data[j]   * vctRects[i].width),
+                                  toIntRounded(data[j+1] * vctRects[i].height))
+                        + vctRects[i].tl();
                 cntJaw.push_back(pt);
             }
             vctCntJaw.push_back(cntJaw);
@@ -341,20 +370,20 @@ GAPI_OCV_KERNEL(GCPULandmPostProc, GLandmPostProc)
 //! [kern_m_impl]
 GAPI_OCV_KERNEL(GCPUGetContours, GGetContours)
 {
-    static void run(const std::vector<std::vector<cv::Point>> vctPtsFaceElems,
-                    const std::vector<Contour> vctCntJaw,
-                    std::vector<Contour> &vctFaceElemsContours,
-                    std::vector<Contour> &vctFaceContours)
+    static void run(const std::vector<Landmarks> &vctPtsFaceElems,
+                    const std::vector<Contour>   &vctCntJaw,
+                          std::vector<Contour>   &vctElemsContours,
+                          std::vector<Contour>   &vctFaceContours)
     {
 //! [kern_m_impl]
         size_t numFaces = vctCntJaw.size();
         CV_Assert(numFaces == vctPtsFaceElems.size());
-        CV_Assert(vctFaceElemsContours.size() == 0ul);
-        CV_Assert(vctFaceContours.size()      == 0ul);
+        CV_Assert(vctElemsContours.size() == 0ul);
+        CV_Assert(vctFaceContours.size()  == 0ul);
         // vctFaceElemsContours will store all the face elements' contours found
         //  on an input image, namely 4 elements (two eyes, nose, mouth)
         //  for every detected face
-        vctFaceElemsContours.reserve(numFaces * 4);
+        vctElemsContours.reserve(numFaces * 4);
         // vctFaceElemsContours will store all the faces' contours found on
         //  an input image
         vctFaceContours.reserve(numFaces);
@@ -400,9 +429,10 @@ GAPI_OCV_KERNEL(GCPUGetContours, GGetContours)
                                          vctPtsFaceElems[i][10],
                                          vctPtsFaceElems[i][11]);
             // Storing all the elements in a vector:
-            vctFaceElemsContours.insert(vctFaceElemsContours.cend(),
-                                        {cntLeftEye, cntRightEye, cntNose,
-                                         cntMouth});
+            vctElemsContours.insert(vctElemsContours.cend(), {cntLeftEye,
+                                                              cntRightEye,
+                                                              cntNose,
+                                                              cntMouth});
 
             // The face contour:
             // Approximating the forehead contour by half-ellipse
@@ -423,42 +453,15 @@ GAPI_OCV_KERNEL(GCPUGetContours, GGetContours)
 };
 
 // GAPI subgraph functions
-inline cv::GMat unsharpMask(const cv::GMat &src, const int sigma,
-                            const float strength);
-inline cv::GMat mask3C(const cv::GMat &src, const cv::GMat &mask);
+inline cv::GMat unsharpMask(const cv::GMat &src,
+                            const int       sigma,
+                            const float     strength);
+inline cv::GMat mask3C(const cv::GMat &src,
+                       const cv::GMat &mask);
 } // namespace custom
 
 
 // Functions implementation:
-// Converts output float coordinates of the face rectangle top-left and
-//  bottom-right points into a face rectangle:
-inline cv::Rect custom::getFaceRect(const cv::Point2f &ptfTopLeft,
-                                    const cv::Point2f &ptfBotRight,
-                                    const cv::Size &imgSize)
-{
-    const int imgCols = imgSize.width;
-    const int imgRows = imgSize.height;
-    const cv::Point tl(std::max(toIntRounded(ptfTopLeft.x  * imgCols), 0),
-                       std::max(toIntRounded(ptfTopLeft.y  * imgRows), 0));
-    const cv::Point br(std::min(toIntRounded(ptfBotRight.x * imgCols),
-                                imgCols - 1),
-                       std::min(toIntRounded(ptfBotRight.y * imgRows),
-                                imgRows - 1));
-    return cv::Rect(tl, br);
-}
-
-// The landmarks detector gives floating point values for landmarks' normed
-//  coordinates relatively to an input ROI (not the original frame), so this
-//  function recounts the coordinates:
-inline cv::Point custom::getRigthCoordinates(const cv::Point2f &ptFloat,
-                                             const cv::Rect &faceCoordinates)
-{
-    return cv::Point(toIntRounded(ptFloat.x * faceCoordinates.width
-                                                + faceCoordinates.x),
-                     toIntRounded(ptFloat.y * faceCoordinates.height
-                                                + faceCoordinates.y));
-}
-
 // Returns an angle (in degrees) between a line given by two Points and
 //  the horison. Note that the result depends on the arguments order:
 inline int custom::getLineInclinationAngleDegrees(const cv::Point &ptLeft,
@@ -478,7 +481,7 @@ inline int custom::getLineInclinationAngleDegrees(const cv::Point &ptLeft,
 inline Contour custom::getForeheadEllipse(const cv::Point &ptJawLeft,
                                           const cv::Point &ptJawRight,
                                           const cv::Point &ptJawLower,
-                                          const size_t capacity = 0)
+                                          const size_t     capacity = 0)
 {
     Contour cntForehead;
     cntForehead.reserve(std::max(capacity, config::kNumPointsInHalfEllipse));
@@ -491,11 +494,11 @@ inline Contour custom::getForeheadEllipse(const cv::Point &ptJawLeft,
     // This will be the inclination of the ellipse
 
     // Counting the half-axis of the ellipse:
-    const double jawWidth  = norm(ptJawLeft - ptJawRight);
+    const double jawWidth  = cv::norm(ptJawLeft - ptJawRight);
     // A forehead width equals the jaw width, and we need a half-axis:
     const int axisX        = toIntRounded(jawWidth / 2.0);
 
-    const double jawHeight = norm(ptFaceCenter - ptJawLower);
+    const double jawHeight = cv::norm(ptFaceCenter - ptJawLower);
     // According to research, in average a forehead is approximately 2/3 of
     //  a jaw:
     const int axisY        = toIntRounded(jawHeight * 2 / 3.0);
@@ -514,21 +517,21 @@ inline Contour custom::getForeheadEllipse(const cv::Point &ptJawLeft,
 //  to reserve enough memory as there will be other points inserted.
 inline Contour custom::getEyeEllipse(const cv::Point &ptLeft,
                                      const cv::Point &ptRight,
-                                     const size_t capacity = 0)
+                                     const size_t     capacity = 0)
 {
     Contour cntEyeBottom;
     cntEyeBottom.reserve(std::max(capacity, config::kNumPointsInHalfEllipse));
     const cv::Point ptEyeCenter((ptRight + ptLeft) / 2);
     const int angle = getLineInclinationAngleDegrees(ptLeft, ptRight);
-    const int axisX = toIntRounded(norm(ptRight - ptLeft) / 2.0);
+    const int axisX = toIntRounded(cv::norm(ptRight - ptLeft) / 2.0);
     // According to research, in average a Y axis of an eye is approximately
     //  1/3 of an X one.
     const int axisY = axisX / 3;
     // We need the lower part of an ellipse:
     static constexpr int kAngEyeStart = 0;
     static constexpr int kAngEyeEnd   = 180;
-    ellipse2Poly(ptEyeCenter, cv::Size(axisX, axisY), angle, kAngEyeStart,
-                 kAngEyeEnd, config::kAngDelta, cntEyeBottom);
+    cv::ellipse2Poly(ptEyeCenter, cv::Size(axisX, axisY), angle, kAngEyeStart,
+                     kAngEyeEnd, config::kAngDelta, cntEyeBottom);
     return cntEyeBottom;
 }
 
@@ -542,25 +545,25 @@ inline Contour custom::getPatchedEllipse(const cv::Point &ptLeft,
     // Shared characteristics for both half-ellipses:
     const cv::Point ptMouthCenter((ptLeft + ptRight) / 2);
     const int angMouth = getLineInclinationAngleDegrees(ptLeft, ptRight);
-    const int axisX    = toIntRounded(norm(ptRight - ptLeft) / 2.0);
+    const int axisX    = toIntRounded(cv::norm(ptRight - ptLeft) / 2.0);
 
     // The top half-ellipse:
     Contour cntMouthTop;
-    const int axisYTop = toIntRounded(norm(ptMouthCenter - ptUp));
+    const int axisYTop = toIntRounded(cv::norm(ptMouthCenter - ptUp));
     // We need the upper part of an ellipse:
     static constexpr int angTopStart = 180;
     static constexpr int angTopEnd   = 360;
-    ellipse2Poly(ptMouthCenter, cv::Size(axisX, axisYTop), angMouth,
-                 angTopStart, angTopEnd, config::kAngDelta, cntMouthTop);
+    cv::ellipse2Poly(ptMouthCenter, cv::Size(axisX, axisYTop), angMouth,
+                     angTopStart, angTopEnd, config::kAngDelta, cntMouthTop);
 
     // The bottom half-ellipse:
     Contour cntMouth;
-    const int axisYBot = toIntRounded(norm(ptMouthCenter - ptDown));
+    const int axisYBot = toIntRounded(cv::norm(ptMouthCenter - ptDown));
     // We need the lower part of an ellipse:
     static constexpr int angBotStart = 0;
     static constexpr int angBotEnd   = 180;
-    ellipse2Poly(ptMouthCenter, cv::Size(axisX, axisYBot), angMouth,
-                 angBotStart, angBotEnd, config::kAngDelta, cntMouth);
+    cv::ellipse2Poly(ptMouthCenter, cv::Size(axisX, axisYBot), angMouth,
+                     angBotStart, angBotEnd, config::kAngDelta, cntMouth);
 
     // Pushing the upper part to vctOut
     cntMouth.reserve(cntMouth.size() + cntMouthTop.size());
@@ -569,15 +572,17 @@ inline Contour custom::getPatchedEllipse(const cv::Point &ptLeft,
     return cntMouth;
 }
 
-inline cv::GMat custom::unsharpMask(const cv::GMat &src, const int sigma,
-                                    const float strength)
+inline cv::GMat custom::unsharpMask(const cv::GMat &src,
+                                    const int       sigma,
+                                    const float     strength)
 {
     cv::GMat blurred   = cv::gapi::medianBlur(src, sigma);
     cv::GMat laplacian = custom::GLaplacian::on(blurred, CV_8U);
     return (src - (laplacian * strength));
 }
 
-inline cv::GMat custom::mask3C(const cv::GMat &src, const cv::GMat &mask)
+inline cv::GMat custom::mask3C(const cv::GMat &src,
+                               const cv::GMat &mask)
 {
     std::tuple<cv::GMat,cv::GMat,cv::GMat> tplIn = cv::gapi::split3(src);
     cv::GMat masked0 = cv::gapi::mask(std::get<0>(tplIn), mask);
@@ -593,23 +598,17 @@ int main(int argc, char** argv)
     cv::namedWindow(config::kWinInput,              cv::WINDOW_NORMAL);
 
     cv::CommandLineParser parser(argc, argv,
-"{ help         h       ||      print the help message. }"
+"{ help         h ||      print the help message. }"
 
-"{ facepath     f       ||      full path to a Face detection model file"
-                                " (.xml).}"
-"{ facedevice           |GPU|   the face detection computation device.}"
+"{ facepath     f ||      a path to a Face detection model file (.xml).}"
+"{ facedevice     |GPU|   the face detection computation device.}"
 
-"{ landmpath    l       ||      full path to a facial Landmarks detection model"
-                                " file (.xml).}"
-"{ landmdevice          |CPU|   the landmarks detection computation device.}"
+"{ landmpath    l ||      a path to a Landmarks detection model file (.xml).}"
+"{ landmdevice    |CPU|   the landmarks detection computation device.}"
 
-"{ input        i       ||      full path to an input image or a video file."
-                                " Skip this argument to capture frames from"
-                                " a camera.}"
-"{ boxes        b       |false| set true if want to draw face Boxes in the"
-                                " \"Input\" window.}"
-"{ landmarks    m       |false| set true if want to draw facial landMarks in"
-                                "the \"Input\" window.}"
+"{ input        i ||      a path to an input. Skip to capture from a camera.}"
+"{ boxes        b |false| set true to draw face Boxes in the \"Input\" window.}"
+"{ landmarks    m |false| set true to draw landMarks in the \"Input\" window.}"
     );
     parser.about("Use this script to run the face beautification"
                  " algorithm on G-API.");
@@ -640,110 +639,107 @@ int main(int argc, char** argv)
     //  constructor is used to keep all temporary objects in a dedicated scope.
     cv::GComputation pipeline([=]()
     {
-        cv::GMat gimgIn;
         // Infering
-        cv::GMat facesDetected                          =
-                cv::gapi::infer<custom::FaceDetector>(gimgIn);
-        GArrayROI garFaceRects                          =
-                custom::GFacePostProc::on(facesDetected, gimgIn,
-                                          config::kFaceConfThreshold);
-        cv::GArray<cv::GMat> garLandmarksDetected       =
-                cv::gapi::infer<custom::FacialLandmarksDetector>(garFaceRects,
-                                                                 gimgIn);
-        cv::GArray<std::vector<cv::Point>> garPtsFaceElems;
-        cv::GArray<Contour>                garJawContours;
-        std::tie(garPtsFaceElems, garJawContours)       =
-                custom::GLandmPostProc::on(garLandmarksDetected, garFaceRects);
-        cv::GArray<Contour> garFaceElemsContours;
-        cv::GArray<Contour> garFaceContours;
-        std::tie(garFaceElemsContours, garFaceContours) =
-                custom::GGetContours::on(garPtsFaceElems, garJawContours);
+//! [net_usg]
+        cv::GMat  gimgIn;
+        cv::GMat  faceOut  = cv::gapi::infer<custom::FaceDetector>(gimgIn);
+//! [net_usg]
+        GArrayROI garRects = custom::GFacePostProc::on(faceOut, gimgIn,
+                                                       config::kConfThresh);
+        cv::GArray<Landmarks> garElems;
+        cv::GArray<Contour>   garJaws;
+        cv::GArray<cv::GMat> landmOut  = cv::gapi::infer<custom::LandmDetector>(
+                                                         garRects, gimgIn);
+        std::tie(garElems, garJaws)    = custom::GLandmPostProc::on(landmOut,
+                                                                 garRects);
+        cv::GArray<Contour> garElsConts;
+        cv::GArray<Contour> garFaceConts;
+        std::tie(garElsConts, garFaceConts) = custom::GGetContours::on(garElems,
+                                                                       garJaws);
         // Masks drawing
         // All masks are created as CV_8UC1
-        cv::GMat mskSharp                               =
-                custom::GFillPolyGContours::on(gimgIn, garFaceElemsContours);
-        cv::GMat mskSharpGaussed                        =
-                cv::gapi::gaussianBlur(mskSharp, config::kGaussKernelSize,
-                                       config::kGaussSigma);
-        cv::GMat mskBlur                                =
-                custom::GFillPolyGContours::on(gimgIn, garFaceContours);
-        cv::GMat mskBlurGaussed                         =
-                cv::gapi::gaussianBlur(mskBlur, config::kGaussKernelSize,
-                                       config::kGaussSigma);
-        // The first argument in mask() is Blur as we want to subtract from Blur
-        //  the next step
-        cv::GMat mskBlurFinal                           =
-                mskBlurGaussed - cv::gapi::mask(mskBlurGaussed,
-                                                mskSharpGaussed);
-        cv::GMat mskFacesGaussed                        =
-                mskBlurFinal + mskSharpGaussed;
-        cv::GMat mskFacesWhite                          =
-                cv::gapi::threshold(mskFacesGaussed, 0, 255, cv::THRESH_BINARY);
-        cv::GMat mskNoFaces                             =
-                cv::gapi::bitwise_not(mskFacesWhite);
-        cv::GMat gimgBilat                              =
-                custom::GBilateralFilter::on(gimgIn, config::kBilatDiameter,
-                                             config::kBilatSigmaColor,
-                                             config::kBilatSigmaSpace);
-        cv::GMat gimgSharp                              =
-                custom::unsharpMask(gimgIn, config::kUnsharpSigma,
-                                    config::kUnsharpStrength);
+//! [kern_usg]
+        cv::GMat mskSharp        = custom::GFillPolyGContours::on(/* cv::GMat            */ gimgIn,
+                                                                  /* cv::GArray<Contour> */ garElsConts);
+//! [kern_usg]
+        cv::GMat mskSharpG       = cv::gapi::gaussianBlur(mskSharp,
+                                                          config::kGKernelSize,
+                                                          config::kGSigma);
+        cv::GMat mskBlur         = custom::GFillPolyGContours::on(gimgIn,
+                                                                  garFaceConts);
+        cv::GMat mskBlurG        = cv::gapi::gaussianBlur(mskBlur,
+                                                          config::kGKernelSize,
+                                                          config::kGSigma);
+        // The first argument in mask() is Blur as we want to subtract from
+        // BlurG the next step:
+        cv::GMat mskBlurFinal    = mskBlurG - cv::gapi::mask(mskBlurG,
+                                                             mskSharpG);
+        cv::GMat mskFacesGaussed = mskBlurFinal + mskSharpG;
+        cv::GMat mskFacesWhite   = cv::gapi::threshold(mskFacesGaussed, 0, 255,
+                                                       cv::THRESH_BINARY);
+        cv::GMat mskNoFaces      = cv::gapi::bitwise_not(mskFacesWhite);
+        cv::GMat gimgBilat       = custom::GBilatFilter::on(gimgIn,
+                                                            config::kBSize,
+                                                            config::kBSigmaCol,
+                                                            config::kBSigmaSp);
+        cv::GMat gimgSharp       = custom::unsharpMask(gimgIn,
+                                                       config::kUnshSigma,
+                                                       config::kUnshStrength);
         // Applying the masks
         // Custom function mask3C() should be used instead of just gapi::mask()
         //  as mask() provides CV_8UC1 source only (and we have CV_8U3C)
         cv::GMat gimgBilatMasked = custom::mask3C(gimgBilat, mskBlurFinal);
-        cv::GMat gimgSharpMasked = custom::mask3C(gimgSharp, mskSharpGaussed);
+        cv::GMat gimgSharpMasked = custom::mask3C(gimgSharp, mskSharpG);
         cv::GMat gimgInMasked    = custom::mask3C(gimgIn,    mskNoFaces);
-        cv::GMat gimgBeautif = gimgBilatMasked + gimgSharpMasked + gimgInMasked;
+        cv::GMat gimgBeautif     = gimgBilatMasked + gimgSharpMasked +
+                                   gimgInMasked;
         // Drawing face boxes and landmarks if necessary:
-        cv::GMat gimgInShowTemp;
+        cv::GMat gimgTemp;
         if (flgLandmarks == true)
         {
-            cv::GMat gimgInShowTempTemp =
-                    custom::GPolyLines::on(gimgIn, garFaceContours,
-                                           config::kClosedLine,
-                                           config::kClrYellow);
-            gimgInShowTemp              =
-                    custom::GPolyLines::on(gimgInShowTempTemp,
-                                           garFaceElemsContours,
-                                           config::kClosedLine,
-                                           config::kClrYellow);
+            cv::GMat gimgTemp2 = custom::GPolyLines::on(gimgIn, garFaceConts,
+                                                        config::kClosedLine,
+                                                        config::kClrYellow);
+                     gimgTemp  = custom::GPolyLines::on(gimgTemp2, garElsConts,
+                                                        config::kClosedLine,
+                                                        config::kClrYellow);
         }
         else
         {
-            gimgInShowTemp = gimgIn;
+            gimgTemp = gimgIn;
         }
-        cv::GMat gimgInShow;
+        cv::GMat gimgShow;
         if (flgBoxes == true)
         {
-            gimgInShow =
-                    custom::GRectangle::on(gimgInShowTemp, garFaceRects,
-                                           config::kClrGreen);
+            gimgShow = custom::GRectangle::on(gimgTemp, garRects,
+                                              config::kClrGreen);
         }
         else
         {
-            // This action is necessary because an output node must be a result of
-            //  some operations applied to an input node, so it handles the case
-            //  when it should be nothing to draw
-            gimgInShow = cv::gapi::copy(gimgInShowTemp);
+        // This action is necessary because an output node must be a result of
+        //  some operations applied to an input node, so it handles the case
+        //  when it should be nothing to draw
+            gimgShow = cv::gapi::copy(gimgTemp);
         }
         return cv::GComputation(cv::GIn(gimgIn),
-                                cv::GOut(gimgBeautif, gimgInShow));
+                                cv::GOut(gimgBeautif, gimgShow));
     });
     // Declaring IE params for networks
+//! [net_prop]
     auto faceParams  = cv::gapi::ie::Params<custom::FaceDetector>
     {
         faceXmlPath,
         faceBinPath,
         faceDevice
     };
-    auto landmParams = cv::gapi::ie::Params<custom::FacialLandmarksDetector>
+    auto landmParams = cv::gapi::ie::Params<custom::LandmDetector>
     {
         landmXmlPath,
         landmBinPath,
         landmDevice
     };
-    auto networks    = cv::gapi::networks(faceParams, landmParams);
+    auto networks      = cv::gapi::networks(faceParams, landmParams);
+//! [net_prop]
     // Declaring custom and fluid kernels have been used:
     auto customKernels = cv::gapi::kernels<custom::GCPUBilateralFilter,
                                            custom::GCPULaplacian,
@@ -757,9 +753,10 @@ int main(int argc, char** argv)
                                            customKernels);
     // Now we are ready to compile the pipeline to a stream with specified
     //  kernels, networks and image format expected to process
-    auto stream = pipeline.compileStreaming(
-                cv::GMatDesc{CV_8U,3,cv::Size(640,480)},
-                cv::compile_args(kernels, networks));
+    auto stream = pipeline.compileStreaming(cv::GMatDesc{CV_8U,3,
+                                                         cv::Size(640,480)},
+                                            cv::compile_args(kernels,
+                                                             networks));
     // Setting the source for the stream:
     if (parser.has("input"))
     {
@@ -789,6 +786,5 @@ int main(int argc, char** argv)
         cv::imshow(config::kWinInput,              imgShow);
         cv::imshow(config::kWinFaceBeautification, imgBeautif);
     }
-    stream.stop();
     return 0;
 }

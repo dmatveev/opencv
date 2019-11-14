@@ -734,12 +734,12 @@ int main(int argc, char** argv)
     auto customKernels = cv::gapi::kernels<custom::GCPUBilateralFilter,
                                            custom::GCPULaplacian,
                                            custom::GCPUFillPolyGContours,
-                                           custom::GCPUPolyLines,custom::GCPURectangle,
+                                           custom::GCPUPolyLines,
+					   custom::GCPURectangle,
                                            custom::GCPUFacePostProc,
                                            custom::GCPULandmPostProc,
                                            custom::GCPUGetContours>();
-    auto kernels       = cv::gapi::combine(cv::gapi::core::fluid::kernels(),
-                                           customKernels);
+    auto kernels       = cv::gapi::combine(cv::gapi::core::fluid::kernels(), customKernels);
 //! [kern_pass_1]
 
     // Declaring input and output variables
@@ -766,10 +766,9 @@ int main(int argc, char** argv)
            break;
         }
 
-//! [kern_pass_2]
-        comp.apply(cv::gin(img), cv::gout(imgBeautif, imgShow),
-                   cv::compile_args(kernels, networks));
-//! [kern_pass_2]
+//! [apply]
+        comp.apply(cv::gin(img), cv::gout(imgBeautif, imgShow), cv::compile_args(kernels, networks));
+//! [apply]
 
         cv::imshow(config::kWinInput,              imgShow);
         cv::imshow(config::kWinFaceBeautification, imgBeautif);
