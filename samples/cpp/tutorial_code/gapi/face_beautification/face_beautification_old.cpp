@@ -745,7 +745,7 @@ int main(int argc, char** argv)
                                            custom::GCPULaplacian,
                                            custom::GCPUFillPolyGContours,
                                            custom::GCPUPolyLines,
-					   custom::GCPURectangle,
+                                           custom::GCPURectangle,
                                            custom::GCPUFacePostProc,
                                            custom::GCPULandmPostProc,
                                            custom::GCPUGetContours>();

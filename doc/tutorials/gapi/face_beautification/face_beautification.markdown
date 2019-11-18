@@ -116,7 +116,7 @@ template argument. We should pass there the network type we have described in
 the previous step.
 These objects are able to contain the paths to structure and weights files and
 a desirable backend which can be one of backends supported by InferenceEngine
-("CPU", "GPU", etc.). 
+("CPU", "GPU", etc.).
 
 ### 3) Network inference inside a graph {#gapi_fb_i_3}
 
@@ -175,8 +175,8 @@ of a processing loop without Streaming:
 
 Now this can be done without explicit use of additional libraries. First of all,
 define a stream variable and pass to it:
-	- video properties (this unconvenience is temporary);
-	- graph compile arguments (which will be passed to the graph inside
+    - video properties (this unconvenience is temporary);
+    - graph compile arguments (which will be passed to the graph inside
 the stream):
 
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp str_comp
@@ -233,7 +233,7 @@ detected face is the following:
 [image_id, label, conf, x_min, y_min, x_max, y_max]; all the seven elements
 are floating point. For more details please visit the model description.
 
-need to take only results with smth >0 and conf > conf_inst; so 
+need to take only results with smth >0 and conf > conf_inst; so
 
 snippet
 
@@ -270,7 +270,7 @@ There are some points in the algorithm to be improved.
 
 The input of f.l.d is square ROI, but f.d. gives non-square rectangles in general.
 If let backend within Inf-API reshape rect to squre - lack of inf accuracy.
-The solution: take not rect but a square describing it - improvement. Problem conducted - 
+The solution: take not rect but a square describing it - improvement. Problem conducted -
 some describing squares can go out of frame -> errors of landmarks detector.
 Solution - count all squares needed; count the farthest outer coordinates; to pad
 the source image by borders with counted size; take ROIs for f.l.d from padded img.
