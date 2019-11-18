@@ -13,9 +13,7 @@
 #include <opencv2/gapi/cpu/gcpukernel.hpp>
 #include "opencv2/gapi/streaming/cap.hpp"
 
-#include <opencv2/videoio.hpp>
 #include <opencv2/highgui.hpp>
-#include <iomanip>
 
 namespace config
 {
@@ -637,11 +635,12 @@ int main(int argc, char** argv)
     // Declaring a graph
     // Streaming-API version of a pipeline expression with a lambda-based
     //  constructor is used to keep all temporary objects in a dedicated scope.
+//! [comp_str_1]
     cv::GComputation pipeline([=]()
     {
-        // Infering
 //! [net_usg]
         cv::GMat  gimgIn;
+//! [comp_str_1]
         cv::GMat  faceOut  = cv::gapi::infer<custom::FaceDetector>(gimgIn);
 //! [net_usg]
         GArrayROI garRects = custom::GFacePostProc::on(faceOut, gimgIn,
@@ -691,8 +690,9 @@ int main(int argc, char** argv)
         cv::GMat gimgBilatMasked = custom::mask3C(gimgBilat, mskBlurFinal);
         cv::GMat gimgSharpMasked = custom::mask3C(gimgSharp, mskSharpG);
         cv::GMat gimgInMasked    = custom::mask3C(gimgIn,    mskNoFaces);
-        cv::GMat gimgBeautif     = gimgBilatMasked + gimgSharpMasked +
-                                   gimgInMasked;
+//! [comp_str_2]
+        cv::GMat gimgBeautif = gimgBilatMasked + gimgSharpMasked + gimgInMasked;
+//! [comp_str_2]
         // Drawing face boxes and landmarks if necessary:
         cv::GMat gimgTemp;
         if (flgLandmarks == true)
@@ -709,11 +709,12 @@ int main(int argc, char** argv)
             gimgTemp = gimgIn;
         }
         cv::GMat gimgShow;
+//! [comp_str_3]
         if (flgBoxes == true)
         {
-            gimgShow = custom::GRectangle::on(gimgTemp, garRects,
-                                              config::kClrGreen);
+            /*cv::GMat*/ gimgShow = custom::GRectangle::on(gimgTemp, garRects, config::kClrGreen);
         }
+//! [comp_str_3]
         else
         {
         // This action is necessary because an output node must be a result of
@@ -721,22 +722,23 @@ int main(int argc, char** argv)
         //  when it should be nothing to draw
             gimgShow = cv::gapi::copy(gimgTemp);
         }
-        return cv::GComputation(cv::GIn(gimgIn),
-                                cv::GOut(gimgBeautif, gimgShow));
+//! [comp_str_4]
+        return cv::GComputation(cv::GIn(gimgIn), cv::GOut(gimgBeautif, gimgShow));
     });
+//! [comp_str_4]
     // Declaring IE params for networks
 //! [net_prop]
     auto faceParams  = cv::gapi::ie::Params<custom::FaceDetector>
     {
-        faceXmlPath,
-        faceBinPath,
-        faceDevice
+        /*std::string*/ faceXmlPath,
+        /*std::string*/ faceBinPath,
+        /*std::string*/ faceDevice
     };
     auto landmParams = cv::gapi::ie::Params<custom::LandmDetector>
     {
-        landmXmlPath,
-        landmBinPath,
-        landmDevice
+        /*std::string*/ landmXmlPath,
+        /*std::string*/ landmBinPath,
+        /*std::string*/ landmDevice
     };
     auto networks      = cv::gapi::networks(faceParams, landmParams);
 //! [net_prop]
@@ -753,16 +755,16 @@ int main(int argc, char** argv)
                                            customKernels);
     // Now we are ready to compile the pipeline to a stream with specified
     //  kernels, networks and image format expected to process
-    auto stream = pipeline.compileStreaming(cv::GMatDesc{CV_8U,3,
-                                                         cv::Size(640,480)},
-                                            cv::compile_args(kernels,
-                                                             networks));
+//! [str_comp]
+    cv::GStreamingCompiled stream = pipeline.compileStreaming(cv::GMatDesc{CV_8U,3,cv::Size(640,480)}, cv::compile_args(kernels, networks));
+//! [str_comp]
     // Setting the source for the stream:
+//! [str_src]
     if (parser.has("input"))
     {
-        stream.setSource(cv::gapi::wip::make_src<cv::gapi::wip::GCaptureSource>
-                         (parser.get<cv::String>("input")));
+        stream.setSource(cv::gapi::wip::make_src<cv::gapi::wip::GCaptureSource>(parser.get<cv::String>("input")));
     }
+//! [str_src]
     else
     {
         stream.setSource(cv::gapi::wip::make_src<cv::gapi::wip::GCaptureSource>
@@ -772,6 +774,7 @@ int main(int argc, char** argv)
     cv::Mat imgShow;
     cv::Mat imgBeautif;
     // Streaming:
+//! [str_loop]
     stream.start();
     while (stream.running())
     {
@@ -786,5 +789,6 @@ int main(int argc, char** argv)
         cv::imshow(config::kWinInput,              imgShow);
         cv::imshow(config::kWinFaceBeautification, imgBeautif);
     }
+//! [str_loop]
     return 0;
 }

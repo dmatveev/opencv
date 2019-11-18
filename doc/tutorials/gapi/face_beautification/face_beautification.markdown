@@ -14,20 +14,12 @@ In this tutorial you are going to learn:
 You can find source code in the `modules/gapi/samples/face_beautification.cpp`
 of the OpenCV source code library.
 
-# Face Beautification algorithm {#gapi_fb_algorithm}
+# New G-API features description {#gapi_fb_features}
 
-An algorithm of a face retouching has been chosen as a subject for this
-tutorial to discover G-API usage convenience and efficiency in the context of
-solving a real CV problem. The main idea is to implement a real-time videostream
-processing that detects faces and applies some filters to make them look
-beautiful (more or less). The pipeline is the following:
-
-![The Face Beautification algorithm](pics/algo.png)
-
-The algorithm consists of two parts: an inference of two networks (including
-data pre- and post-processing) and an image filtering pipeline that uses the
-inference data (creating masks, applying filters and composing the output
-image). 
+Before we can discuss an implementation of any algorithm, we should
+sort out new G-API features applied there. Obviously, paragraphs below are not
+detailed documental articles, they are just brief guides how to use one feature
+or another with examples of usage.
 
 ## Custom kernels implementation {#gapi_fb_custom_kernels}
 
@@ -96,9 +88,9 @@ Let's prepare our chosen networks for being processed by G-API's Inference-API.
 Providing a new network support is quite similar to a new kernel implementation.
 There are three main steps:
 
-### 1) Network declaration {#gapi_fb_i_1}
+### 1) Network definition {#gapi_fb_i_1}
 
-To declare a network we should use the special macro G_API_NET:
+To define a network we should use the special macro G_API_NET:
 
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp net_decl
 
@@ -113,27 +105,172 @@ are:
 
 ### 2) Network parametrization {#gapi_fb_i_2}
 
-To set network's structure, weights and a backend we have to
-generate `cv::gapi::ie::Params<>` object and then pass it to a graph by the
-compile args we've already mentioned:
+To set network's parameters we have to generate `cv::gapi::ie::Params<>` object
+and then give it to a graph by the compile args we've already mentioned:
 
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp net_prop
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_old.cpp apply
 
+Every `cv::gapi::ie::Params<>` object is related to a network specified by its
+template argument. We should pass there the network type we have described in
+the previous step.
+These objects are able to contain the paths to structure and weights files and
+a desirable backend which can be one of backends supported by InferenceEngine
+("CPU", "GPU", etc.). 
+
 ### 3) Network inference inside a graph {#gapi_fb_i_3}
 
 We are able to use the network in our pipline now! To do that, we should call
-`cv::gapi::infer<>()` specifying the network we want to infer:
+`cv::gapi::infer<>()` setting the network type as a template argument to
+specify the network we want to infer:
 
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp net_usg
 
 ## Videosource processing via Streaming-API {#gapi_fb_streaming}
 
-There are no interest in using a lot of computer vision pipelines to process
+There are no interest in using the most of computer vision pipelines to process
 just a single picture -- a big group of them are created to be launched with a
-videosource as an input. Therefore, it is essential for the G-API as an
+videosource as an input. It is therefore essential for the G-API as an
 interface for pipelines implementation to provide a possibility of a stream
 processing without any external instruments to be applied by user.
+So, that's why Streaming-API is needed.
+
+The usage of this G-API feature makes codewriting easier, or, at least, more
+independent. As usual in this tutorial, let's deal with it by several steps:
+
+### 1) Pipeline graph definition {#gapi_fb_s_1}
+
+To begin with, a `cv::GComputation` object (which contains all the
+pipeline) used to be defined statically by graph's input and output described in
+a code (almost all the graph's body is skipped in this code snippet except the
+input and output nodes):
+
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_old.cpp comp_old_1
+...
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_old.cpp comp_old_2
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_old.cpp comp_old_3
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_old.cpp comp_old_4
+
+To apply Streaming-API to our problem we should use a different version of a
+pipeline expression  with a lambda-based constructor to keep all temporary data
+objects in a dedicated scope:
+
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp comp_str_1
+...
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp comp_str_2
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp comp_str_3
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp comp_str_4
+
+### 2) Frames processing {#gapi_fb_s_2}
+
+The next step used to be a videostream definition and a source setup:
+
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_old.cpp header
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_old.cpp in_out_1
+
+and then a compiled graph application to every single frame. This is an example
+of a processing loop without Streaming:
+
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_old.cpp in_out_2
+
+Now this can be done without explicit use of additional libraries. First of all,
+define a stream variable and pass to it:
+	- video properties (this unconvenience is temporary);
+	- graph compile arguments (which will be passed to the graph inside
+the stream):
+
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp str_comp
+
+Then we should set a source:
+
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp str_src
+
+And for this moment our stream is ready to be launched! An example of the
+Streaming loop:
+
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp str_loop
+
+There are some other useful possibilities provided, e.g. you can abort stream
+processing via `cv::GStreamingCompiled::stop()` method (the next call of
+`cv::GStreamingCompiled::start()` will start processing the stream from the very
+beginning).
+
+### 3) ??? {#gapi_fb_s_3}
+
+### 4) You are breathtaking! {#gapi_fb_s_4}
+
+Now, when all the new G-API features are described and understood, we can
+discuss some algorithms.
+
+# Face Beautification algorithm {#gapi_fb_algorithm}
+
+The algorithm of a face retouching has been chosen as a subject for this
+tutorial to discover G-API usage convenience and efficiency in the context of
+solving a real CV problem. Its main idea is to implement a real-time videostream
+processing that detects faces and applies some filters to make them look
+beautiful (more or less). The pipeline is the following:
+
+![The Face Beautification algorithm](pics/algo.png)
+
+The algorithm consists of two parts: an inference of two networks (including
+data pre- and post-processing) and an image filtering pipeline that uses the
+inference data (creating masks, applying filters and composing the output
+image).
+
+The details of obvious operations (like command line parsing or .. ) are not
+going to be described in this text; there will be only comments about discussing
+features implementation.
+
+Let's start at the begining of a pipline graph description.
+
+## Face detector inference and post-processing {#gapi_fb_face_detect}
+
+snippet
+
+post-processing: A face detector outputs a blob with the shape: [1, 1, N, 7], where N is
+the number of detected bounding boxes. Structure of an output for every
+detected face is the following:
+[image_id, label, conf, x_min, y_min, x_max, y_max]; all the seven elements
+are floating point. For more details please visit the model description.
+
+need to take only results with smth >0 and conf > conf_inst; so 
+
+snippet
+
+used `cv::Mat` data parsing by float pointer.
+
+coordinates are rounded with accuracy, the face rectangle is defined by 2 points.
+
+the most important here: sometimes detector spit out coordinates that are out of image;
+if process without anything - errors of landmarks detector so the frame's borders rectangle
+created and then intersected with face rect so the saved in outFaces ROI's coordinates are for sure inside the frame
+
+## Facial landmarks detector inference and post-processing {#gapi_fb_landm_detect}
+
+snippet
+
+for arrays of points which are naturally contours - Contour type:
+
+snippet
+
+the array with all landmarks is array of points; syntactically it is Contour
+ though semantically - not a contour (ordered set) so I put another type
+Landmarks which syntactically is equal to Contour type:
+
+snippet
 
 
 
+
+## Possible further improvements {#gapi_fb_to_improve}
+
+There are some points in the algorithm to be improved.
+
+### Correct ROI reshaping for meeting conditions required by fac landm detector {#gapi_fb_padding}
+
+The input of f.l.d is square ROI, but f.d. gives non-square rectangles in general.
+If let backend within Inf-API reshape rect to squre - lack of inf accuracy.
+The solution: take not rect but a square describing it - improvement. Problem conducted - 
+some describing squares can go out of frame -> errors of landmarks detector.
+Solution - count all squares needed; count the farthest outer coordinates; to pad
+the source image by borders with counted size; take ROIs for f.l.d from padded img.

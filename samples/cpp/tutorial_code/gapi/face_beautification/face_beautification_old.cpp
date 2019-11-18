@@ -12,7 +12,9 @@
 #include <opencv2/gapi/infer/ie.hpp>
 #include <opencv2/gapi/cpu/gcpukernel.hpp>
 
+//! [header]
 #include <opencv2/videoio.hpp>
+//! [header]
 #include <opencv2/highgui.hpp>
 #include <iomanip>
 
@@ -624,22 +626,24 @@ int main(int argc, char** argv)
     // To provide this opportunity, it is necessary to check the flags when
     //  compiling a graph
 
+//! [comp_old_1]
     // Declaring a graph
     cv::GMat gimgIn;
+//! [comp_old_1]
 
     // Infering
     cv::GMat facesDetected                          =
             cv::gapi::infer<custom::FaceDetector>(gimgIn);
-    GArrayROI garFaceRects                          =
+    GArrayROI garRects                          =
             custom::GFacePostProc::on(facesDetected, gimgIn,
                                       config::kFaceConfThreshold);
     cv::GArray<cv::GMat> garLandmarksDetected       =
-            cv::gapi::infer<custom::FacialLandmarksDetector>(garFaceRects,
+            cv::gapi::infer<custom::FacialLandmarksDetector>(garRects,
                                                              gimgIn);
     cv::GArray<std::vector<cv::Point>> garPtsFaceElems;
     cv::GArray<Contour>                garJawContours;
     std::tie(garPtsFaceElems, garJawContours)       =
-            custom::GLandmPostProc::on(garLandmarksDetected, garFaceRects);
+            custom::GLandmPostProc::on(garLandmarksDetected, garRects);
     cv::GArray<Contour> garFaceElemsContours;
     cv::GArray<Contour> garFaceContours;
     std::tie(garFaceElemsContours, garFaceContours) =
@@ -682,29 +686,33 @@ int main(int argc, char** argv)
     cv::GMat gimgBilatMasked = custom::mask3C(gimgBilat, mskBlurFinal);
     cv::GMat gimgSharpMasked = custom::mask3C(gimgSharp, mskSharpGaussed);
     cv::GMat gimgInMasked    = custom::mask3C(gimgIn, mskNoFaces);
+//! [comp_old_2]
     cv::GMat gimgBeautif = gimgBilatMasked + gimgSharpMasked + gimgInMasked;
+//! [comp_old_2]
 
     // Drawing face boxes and landmarks if necessary:
-    cv::GMat gimgInShowTemp;
+    cv::GMat gimgTemp;
     if (flgLandmarks == true)
     {
-        cv::GMat gimgInShowTempTemp =
+        cv::GMat gimgTempTemp =
                 custom::GPolyLines::on(gimgIn, garFaceContours,
                                        config::kClosedLine, config::kClrYellow);
-        gimgInShowTemp =
-                custom::GPolyLines::on(gimgInShowTempTemp, garFaceElemsContours,
+        gimgTemp =
+                custom::GPolyLines::on(gimgTempTemp, garFaceElemsContours,
                                        config::kClosedLine, config::kClrYellow);
     }
     else
     {
-        gimgInShowTemp = gimgIn;
+        gimgTemp = gimgIn;
     }
     cv::GMat gimgInShow;
+//! [comp_old_3]
     if (flgBoxes == true)
     {
-        gimgInShow = custom::GRectangle::on(gimgInShowTemp, garFaceRects,
-                                            config::kClrGreen);
+        /*cv::GMat*/ gimgInShow = custom::GRectangle::on(gimgTemp, garRects, config::kClrGreen);
     }
+    // The output nodes are receved somehow - it is not the point here
+//! [comp_old_3]
     else
     {
         // This action is necessary because an output node must be a result of
@@ -713,7 +721,9 @@ int main(int argc, char** argv)
         gimgInShow = cv::gapi::copy(gimgInShowTemp);
     }
 
+//! [comp_old_4]
     cv::GComputation comp(cv::GIn(gimgIn), cv::GOut(gimgBeautif, gimgInShow));
+//! [comp_old_4]
 
     // Declaring IE params for networks
     auto faceParams  = cv::gapi::ie::Params<custom::FaceDetector>
@@ -743,11 +753,13 @@ int main(int argc, char** argv)
 //! [kern_pass_1]
 
     // Declaring input and output variables
+//! [in_out_1]
     cv::VideoCapture cap;
     if (parser.has("input"))
     {
         cap.open(parser.get<cv::String>("input"));
     }
+//! [in_out_1]
     else if (!cap.open(0))
     {
         std::cout << "No input available" << std::endl;
@@ -757,6 +769,7 @@ int main(int argc, char** argv)
     cv::Mat imgShow;
     cv::Mat imgBeautif;
 
+//! [in_out_2]
     while (cv::waitKey(1) < 0)
     {
         cap >> img;
@@ -773,5 +786,6 @@ int main(int argc, char** argv)
         cv::imshow(config::kWinInput,              imgShow);
         cv::imshow(config::kWinFaceBeautification, imgBeautif);
     }
+//! [in_out_2]
     return 0;
 }
