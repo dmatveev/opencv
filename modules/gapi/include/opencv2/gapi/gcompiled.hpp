@@ -210,9 +210,6 @@ public:
     // FIXME: Why it requires compile args?
     void reshape(const GMetaArgs& inMetas, const GCompileArgs& args);
 
-    static void setMetaData(ade::Graph &g, cv::GCompileArgs &args
-                        , const cv::GMetaArgs &metas);
-
 protected:
     /// @private
     std::shared_ptr<Priv> m_priv;

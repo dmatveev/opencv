@@ -195,7 +195,8 @@ namespace
 
 cv::gimpl::GCompiler::GCompiler(const cv::GComputation &c,
                                 GMetaArgs              &&metas,
-                                GCompileArgs           &&args)
+                                GCompileArgs           &&args,
+                                bool addMetaPasses)
     : m_c(c), m_metas(std::move(metas)), m_args(std::move(args))
 {
     using namespace std::placeholders;
@@ -260,7 +261,7 @@ cv::gimpl::GCompiler::GCompiler(const cv::GComputation &c,
     m_e.addPass("kernels", "check_islands_content", passes::checkIslandsContent);
 
     //Input metas may be empty when a graph is compiled for streaming
-    if (!m_metas.empty())
+    if (addMetaPasses)
     {
         m_e.addPassStage("meta");
         m_e.addPass("meta", "initialize",   std::bind(passes::initMeta, _1, std::ref(m_metas)));
@@ -425,11 +426,12 @@ cv::GStreamingCompiled cv::gimpl::GCompiler::produceStreamingCompiled(GPtr &&pg)
 {
     std::unique_ptr<GStreamingExecutor> pE(new GStreamingExecutor(std::move(pg), m_args, m_metas));
 
-    const auto &outMetas = GModel::ConstGraph(*pg).metadata()
-        .get<OutputMeta>().outMeta;
+    // const auto &outMetas = GModel::ConstGraph(*pg).metadata()
+    //     .get<OutputMeta>().outMeta;
 
     GStreamingCompiled compiled;
-    compiled.priv().setup(m_metas, outMetas, std::move(pE));
+    // compiled.priv().setup(m_metas, outMetas, std::move(pE));
+    compiled.priv().setup(std::move(pE));
     return compiled;
 }
 
@@ -449,4 +451,14 @@ cv::GStreamingCompiled cv::gimpl::GCompiler::compileStreaming()
     gm.metadata().set(Streaming{});
     runPasses(*pG);
     return produceStreamingCompiled(std::move(pG));
+}
+
+void cv::gimpl::GCompiler::runMetaPasses(ade::Graph &g, const cv::GMetaArgs &metas)
+{
+    auto pass_ctx = ade::passes::PassContext{g};
+    cv::gimpl::passes::initMeta(pass_ctx, metas);
+
+    cv::gimpl::passes::inferMeta(pass_ctx, true);
+    //compile islands for m_orig_graph
+    cv::gimpl::passes::storeResultingMeta(pass_ctx);
 }

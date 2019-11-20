@@ -433,11 +433,9 @@ cv::gimpl::GStreamingExecutor::GStreamingExecutor(std::unique_ptr<ade::Graph> &&
                 std::vector<RcDesc> input_rcs;
                 std::vector<RcDesc> output_rcs;
                 std::vector<GRunArg> in_constants;
-                cv::GMetaArgs output_metas;
                 input_rcs.reserve(nh->inNodes().size());
                 in_constants.reserve(nh->inNodes().size()); // FIXME: Ugly
                 output_rcs.reserve(nh->outNodes().size());
-                output_metas.reserve(nh->outNodes().size());
 
                 std::unordered_set<ade::NodeHandle, ade::HandleHasher<ade::Node> > const_ins;
 
@@ -461,7 +459,7 @@ cv::gimpl::GStreamingExecutor::GStreamingExecutor(std::unique_ptr<ade::Graph> &&
                                            , orig_data_info.shape
                                            , orig_data_info.ctor});
                 };
-                auto xtract_out = [&](ade::NodeHandle slot_nh, std::vector<RcDesc> &vec, cv::GMetaArgs &metas) {
+                auto xtract_out = [&](ade::NodeHandle slot_nh, std::vector<RcDesc> &vec) {
                     const auto orig_data_nh
                         = m_gim.metadata(slot_nh).get<DataSlot>().original_data_node;
                     const auto &orig_data_info
@@ -473,17 +471,17 @@ cv::gimpl::GStreamingExecutor::GStreamingExecutor(std::unique_ptr<ade::Graph> &&
                     vec.emplace_back(RcDesc{ orig_data_info.rc
                                            , orig_data_info.shape
                                            , orig_data_info.ctor});
-                    metas.emplace_back(orig_data_info.meta);
                 };
                 // FIXME: JEZ IT WAS SO AWFUL!!!!
                 for (auto in_slot_nh  : nh->inNodes())  xtract_in(in_slot_nh,  input_rcs);
-                for (auto out_slot_nh : nh->outNodes()) xtract_out(out_slot_nh, output_rcs, output_metas);
+                for (auto out_slot_nh : nh->outNodes()) xtract_out(out_slot_nh, output_rcs);
 
                 m_ops.emplace_back(OpDesc{ std::move(input_rcs)
                                          , std::move(output_rcs)
-                                         , std::move(output_metas)
+                                         , {}
                                          , nh
-                                         , in_constants});
+                                         , in_constants
+                                         , {}});
 
                 // Initialize queues for every operation's input
                 ade::TypedGraph<DataQueue> qgr(*m_island_graph);
@@ -556,37 +554,25 @@ void cv::gimpl::GStreamingExecutor::setSource(GRunArgs &&ins)
                                            " currently supported!"));
     }
 
-    // Setting metas
-    const auto& metas = m_metas;
-    cv::GCompiled::setMetaData(*m_orig_graph.get(), m_comp_args, metas);
+    GCompiler::runMetaPasses(*m_orig_graph.get(), m_metas);
+    GCompiler::compileIslands(*m_orig_graph.get(), m_comp_args);
 
     GModel::Graph gm(*m_orig_graph);
 
-    auto xtract_out = [&](ade::NodeHandle slot_nh, std::vector<RcDesc> &vec, cv::GMetaArgs &metas) {
-        const auto orig_data_nh
-            = m_gim.metadata(slot_nh).get<DataSlot>().original_data_node;
-        const auto &orig_data_info
-            = gm.metadata(orig_data_nh).get<Data>();
-        if (orig_data_info.shape == GShape::GARRAY) {
-            // FIXME: GArray lost host constructor problem
-            GAPI_Assert(!cv::util::holds_alternative<cv::util::monostate>(orig_data_info.ctor));
-        }
-        vec.emplace_back(RcDesc{ orig_data_info.rc
-                               , orig_data_info.shape
-                               , orig_data_info.ctor});
+    auto xtract_out_meta = [&](ade::NodeHandle slot_nh, cv::GMetaArgs &metas) {
+        const auto &orig_data_nh = m_gim.metadata(slot_nh).get<DataSlot>().original_data_node;
+        const auto &orig_data_info = gm.metadata(orig_data_nh).get<Data>();
         metas.emplace_back(orig_data_info.meta);
     };
 
+// fixme: 
+// Can be moved to GStreamingExecutor constructor if m_metas not empty
     for (auto& op : m_ops) {
-        std::vector<RcDesc> output_rcs;
         cv::GMetaArgs output_metas;
-
-        output_rcs.reserve(op.nh->outNodes().size());
         output_metas.reserve(op.nh->outNodes().size());
 
-        for (auto out_slot_nh : op.nh->outNodes()) xtract_out(out_slot_nh, output_rcs, output_metas);
+        for (auto out_slot_nh : op.nh->outNodes()) xtract_out_meta(out_slot_nh, output_metas);
 
-        op.out_objects = output_rcs;
         op.out_metas = output_metas;
     }
 
