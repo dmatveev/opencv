@@ -213,37 +213,50 @@ beautiful (more or less). The pipeline is the following:
 ![The Face Beautification algorithm](pics/algo.png)
 
 The algorithm consists of two parts: an inference of two networks (including
-data pre- and post-processing) and an image filtering pipeline that uses the
+data pre- and post-processing) and an image filtering pipeline which uses the
 inference data (creating masks, applying filters and composing the output
 image).
 
 The details of obvious operations (like command line parsing or .. ) are not
-going to be described in this text; there will be only comments about discussing
+going to be described in this text; there will be only comments about debatable
 features implementation.
 
 Let's start at the begining of a pipline graph description.
 
 ## Face detector inference and post-processing {#gapi_fb_face_detect}
 
-snippet
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp fd_inf
 
-post-processing: A face detector outputs a blob with the shape: [1, 1, N, 7], where N is
-the number of detected bounding boxes. Structure of an output for every
-detected face is the following:
-[image_id, label, conf, x_min, y_min, x_max, y_max]; all the seven elements
-are floating point. For more details please visit the model description.
+- After the inference, a post-processing of an output `cv::Mat` is required: the
+face detector outputs a blob with the shape [1, 1, N, 7], where N is
+the number of boxes bounding detected faces. Structure of an output for every
+face is the following: [image_id, label, conf, x_min, y_min, x_max, y_max];
+all the seven elements are floating point. For our further goals we need to take
+only results with `image_id > 0` as a negative value in this field indicates the
+end of detections; also we can cut detections by the `conf` field to avoid
+mistakes; so the Mat parsing looks like this code:
 
-need to take only results with smth >0 and conf > conf_inst; so
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp fd_pp
 
-snippet
+- There is `cv::Mat` data parsing by pointer on float used. 
 
-used `cv::Mat` data parsing by float pointer.
+- Float numbers we've got from the Mat are between 0 and 1 and denote normalized
+coordinates; to get the real pixel coordinates we should multiply it with the
+image sizes respectively to the directions. To be fully accurate, the received
+numbers should be then rounded in the right way and casted to `int` to construct
+integer Points; these operations have been wrapped by `toIntRounded()`:
 
-coordinates are rounded with accuracy, the face rectangle is defined by 2 points.
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp toInt
 
-the most important here: sometimes detector spit out coordinates that are out of image;
-if process without anything - errors of landmarks detector so the frame's borders rectangle
-created and then intersected with face rect so the saved in outFaces ROI's coordinates are for sure inside the frame
+- Rectangles was constructed by two Points - the top-left and the bottom-right
+corners.
+
+- By far the most important thing here is solving an issue that sometimes
+detector spits out coordinates out of image; if we pass such an ROI
+to be processed, errors of landmarks detector will occure. To handle these cases
+the frame's borders rectangle `borders` is created and then intersected with
+the face rect (by `operator&()`) so the ROI saved in `outFaces` are for sure
+inside the frame.
 
 ## Facial landmarks detector inference and post-processing {#gapi_fb_landm_detect}
 

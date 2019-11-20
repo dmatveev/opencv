@@ -47,10 +47,12 @@ using Landmarks = std::vector<cv::Point>;
 
 
 // Wrapper function
+//! [toInt]
 template<typename Tp> inline int toIntRounded(const Tp x)
 {
     return static_cast<int>(std::lround(x));
 }
+//! [toInt]
 
 template<typename Tp> inline double toDouble(const Tp x)
 {
@@ -264,6 +266,7 @@ GAPI_OCV_KERNEL(GCPURectangle, custom::GRectangle)
 // https://github.com/opencv/open_model_zoo/blob/master/intel_models/face-detection-adas-0001
 // This kernel is the face detection output blob parsing that returns a vector
 //  of detected faces' rects:
+//! [fd_pp]
 GAPI_OCV_KERNEL(GCPUFacePostProc, GFacePostProc)
 {
     static void run(const cv::Mat   &inDetectResult,
@@ -292,15 +295,14 @@ GAPI_OCV_KERNEL(GCPUFacePostProc, GFacePostProc)
                 const float top    = data[i * kObjectSize + 4];
                 const float right  = data[i * kObjectSize + 5];
                 const float bottom = data[i * kObjectSize + 6];
-                cv::Point tl(toIntRounded(left   * imgCols),
-                             toIntRounded(top    * imgRows));
-                cv::Point br(toIntRounded(right  * imgCols),
-                             toIntRounded(bottom * imgRows));
+                cv::Point tl(toIntRounded(left   * imgCols), toIntRounded(top    * imgRows));
+                cv::Point br(toIntRounded(right  * imgCols), toIntRounded(bottom * imgRows));
                 outFaces.push_back(cv::Rect(tl, br) & borders);
             }
         }
     }
 };
+//! [fd_pp]
 
 // This kernel is the facial landmarks detection output Mat parsing for every
 //  detected face; returns a tuple containing a vector of vectors of
@@ -638,6 +640,7 @@ int main(int argc, char** argv)
 //! [comp_str_1]
     cv::GComputation pipeline([=]()
     {
+//! [fd_inf]
 //! [net_usg]
         cv::GMat  gimgIn;
 //! [comp_str_1]
@@ -645,6 +648,7 @@ int main(int argc, char** argv)
 //! [net_usg]
         GArrayROI garRects = custom::GFacePostProc::on(faceOut, gimgIn,
                                                        config::kConfThresh);
+//! [fd_inf]
         cv::GArray<Landmarks> garElems;
         cv::GArray<Contour>   garJaws;
         cv::GArray<cv::GMat> landmOut  = cv::gapi::infer<custom::LandmDetector>(

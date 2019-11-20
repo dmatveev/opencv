@@ -718,7 +718,7 @@ int main(int argc, char** argv)
         // This action is necessary because an output node must be a result of
         //  some operations applied to an input node, so it handles the case
         //  when it should be nothing to draw
-        gimgInShow = cv::gapi::copy(gimgInShowTemp);
+        gimgInShow = cv::gapi::copy(gimgTemp);
     }
 
 //! [comp_old_4]
