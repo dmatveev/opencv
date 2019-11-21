@@ -18,7 +18,7 @@ of the OpenCV source code library.
 
 Before we can discuss an implementation of any algorithm, we should
 sort out new G-API features applied there. Obviously, paragraphs below are not
-detailed documental articles, they are just brief guides how to use one feature
+detailed documentary articles, they are just brief guides how to use one feature
 or another with examples of usage.
 
 ## Custom kernels implementation {#gapi_fb_custom_kernels}
@@ -57,11 +57,11 @@ defines what the operation should do:
 
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp kern_impl
 
-For more details (including arguments of `run()` function and their order),
+For more details (including arguments of a function `run()` and their order),
 visit [Implementing a kernel](@ref gapi_kernel_implementing).
 
-A note about multiple returning: all the output arguments of an "::on()" method
-are just put after input ones keeping order:
+A note about multiple returning: all the output arguments of a kernel signature
+are just put after input ones keeping the order:
 
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp kern_m_impl
 
@@ -73,7 +73,7 @@ to a graph by compile arguments:
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_old.cpp kern_pass_1
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_old.cpp apply
 
-Congratulations! Now we are able to use your new kernel in the pipeline. E.g.:
+Congratulations! Now we are able to use our new kernel in the pipeline. E.g.:
 
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp kern_usg
 
@@ -151,7 +151,7 @@ input and output nodes):
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_old.cpp comp_old_3
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_old.cpp comp_old_4
 
-To apply Streaming-API to our problem we should use a different version of a
+To apply Streaming-API we should use a different version of a
 pipeline expression  with a lambda-based constructor to keep all temporary data
 objects in a dedicated scope:
 
@@ -168,8 +168,8 @@ The next step used to be a videostream definition and a source setup:
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_old.cpp header
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_old.cpp in_out_1
 
-and then a compiled graph application to every single frame. This is an example
-of a processing loop without Streaming:
+and then a compiled graph used to be applied to every single frame.
+This is an example of a processing loop without Streaming:
 
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_old.cpp in_out_2
 
@@ -217,61 +217,114 @@ data pre- and post-processing) and an image filtering pipeline which uses the
 inference data (creating masks, applying filters and composing the output
 image).
 
-The details of obvious operations (like command line parsing or .. ) are not
-going to be described in this text; there will be only comments about debatable
-features implementation.
+The details of obvious operations (like command line parsing or single-string
+kernels implementing) are not going to be described in this text; there will be
+only comments about debatable features implementation.
 
-Let's start at the begining of a pipline graph description.
+Let's start at the begining of a pipline graph definition.
 
 ## Face detector inference and post-processing {#gapi_fb_face_detect}
 
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp gar_ROI
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp fd_inf
 
-- After the inference, a post-processing of an output `cv::Mat` is required: the
-face detector outputs a blob with the shape [1, 1, N, 7], where N is
-the number of boxes bounding detected faces. Structure of an output for every
-face is the following: [image_id, label, conf, x_min, y_min, x_max, y_max];
-all the seven elements are floating point. For our further goals we need to take
-only results with `image_id > 0` as a negative value in this field indicates the
-end of detections; also we can cut detections by the `conf` field to avoid
-mistakes; so the Mat parsing looks like this code:
+The `config::smth` variables are constants defined in the `config` namespace:
 
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp config
+
+After the inference, output `cv::Mat` post-processing is required: the
+face detector returns a blob with the shape [1, 1, N, 7], where N is
+the number of bounding boxes containing detected faces. Structure of an output
+for every face is the following:
+`[image_id, label, conf, x_min, y_min, x_max, y_max]`;
+all the seven elements are floating point. For our further goals we need to take
+only results with `image_id > 0` because a negative value in this field
+indicates the end of detections; also we can cut detections by the `conf` field
+to avoid detector's mistakes; so the Mat parsing looks like this code:
+
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp vec_ROI
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp fd_pp
 
-- There is `cv::Mat` data parsing by pointer on float used. 
+Some points to be mentioned about this kernel:
+
+- There is `cv::Mat` data parsing by the pointer on a float used.
 
 - Float numbers we've got from the Mat are between 0 and 1 and denote normalized
-coordinates; to get the real pixel coordinates we should multiply it with the
+coordinates; to get the real pixel coordinates we should multiply it by the
 image sizes respectively to the directions. To be fully accurate, the received
 numbers should be then rounded in the right way and casted to `int` to construct
 integer Points; these operations have been wrapped by `toIntRounded()`:
 
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp toInt
 
-- Rectangles was constructed by two Points - the top-left and the bottom-right
+- Rectangles are constructed by two Points --- the top-left and the bottom-right
 corners.
 
 - By far the most important thing here is solving an issue that sometimes
-detector spits out coordinates out of image; if we pass such an ROI
-to be processed, errors of landmarks detector will occure. To handle these cases
-the frame's borders rectangle `borders` is created and then intersected with
+detector spits out coordinates located outside of the image; if we pass such an
+ROI to be processed, errors of the landmarks detector will occure. To handle
+these cases the frame box `borders` is created and then intersected with
 the face rect (by `operator&()`) so the ROI saved in `outFaces` are for sure
 inside the frame.
 
 ## Facial landmarks detector inference and post-processing {#gapi_fb_landm_detect}
 
-snippet
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp ld_inf
 
-for arrays of points which are naturally contours - Contour type:
+First of all, a few words about custom types: the `Contour` type is used for
+arrays of points which are naturally contours (ordered sets of points):
 
-snippet
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp cont
 
-the array with all landmarks is array of points; syntactically it is Contour
- though semantically - not a contour (ordered set) so I put another type
-Landmarks which syntactically is equal to Contour type:
+The array with all landmarks is an array of points; syntactically it is a `Contour`
+though semantically is not a contour
+so I put another type `Landmarks` which syntactically is equal to `Contour`
+type to underline semantical differences:
 
-snippet
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp landm
 
+Post-processing of the Mat is required here too: there are 35 landmarks given by
+the detector for each face in a frame; the first 18 of them are facial elements
+(eyes, eyebrows, a nose, a mouth) and the last 17 --- a jaw contour. Landmarks
+are floating point values of coordinates normalized relatively to an input ROI
+(not the original frame). What is of the same importance: for the further goals
+we need contours of eyes, mouths, faces, etc., not the landmarks.
+So the process is split into two parts.
+
+### Normalized points scaling {#gapi_fb_ld_scl}
+
+The first step is to denormalize landmarks' coordinates to the real pixel
+coordinates of the source frame. Also we are able to divide points into two
+groups here --- face elements and a jaw contour. This is a described kernel:
+
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp ld_pp_scl
+
+Some points:
+
+- Data parsing is the same --- by pointer.
+
+- We iterate by 2 in one step because `Point.x` and `Point.y` are contained
+successively.
+
+- Since the coordinates are related to an input ROI, the values of the ROI's
+top-left corner coordinates should be added.
+
+The outputs are vectors containing points of facial elements and jaw contours.
+
+### Contours getting {#gapi_fb_ld_cnts}
+
+The more certain idea of this face beautification algorithm is to smooth out the
+skin and to make eyes, a nose and a mouth sharper. So we need contours of facial
+elements based on landmarks and the whole face contour (not only a jaw) as they
+are drawn in the picture of the pipeline above. Let's
+see all the sequence of actions have been made in the following kernel:
+
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp ld_pp_cnts
+
+To understand the points numeration we should just see the following
+illustration:
+
+![Landmarks order](pics/landmarks_illustration.png)
 
 
 
@@ -279,11 +332,25 @@ snippet
 
 There are some points in the algorithm to be improved.
 
-### Correct ROI reshaping for meeting conditions required by fac landm detector {#gapi_fb_padding}
+### Correct ROI reshaping for meeting conditions required by the facial landmarks detector {#gapi_fb_padding}
 
-The input of f.l.d is square ROI, but f.d. gives non-square rectangles in general.
-If let backend within Inf-API reshape rect to squre - lack of inf accuracy.
-The solution: take not rect but a square describing it - improvement. Problem conducted -
-some describing squares can go out of frame -> errors of landmarks detector.
-Solution - count all squares needed; count the farthest outer coordinates; to pad
-the source image by borders with counted size; take ROIs for f.l.d from padded img.
+The input of the facial landmarks detector is a square ROI, but the face
+detector gives non-square rectangles in general. If we let the backend within
+Inference-API compress the rectangle to a square by itself, the lack of
+inference accuracy can be noticed in some cases.
+There is a solution: we may give a describing square ROI instead of the
+rectangular one to the landmarks detector, so there wiil be no need to compress
+the ROI, which will lead to an accuracy improvement.
+Unfortunately, another problem is conducted if we do that:
+if the rectangular ROI is near the border, a describing square will probably go
+out of the frame --- this means errors of the landmarks detector.
+To aviod such a mistake, we have to implement an algorithm that, firstly,
+describes every rectangle by a square, then counts the farthest coordinates
+turned up to be outside of the frame and, finally, pads the source image by
+borders (e.g. single-colored) with the size counted. After that frame
+adjustment it will be safe to take square ROIs for the facial landmarks
+detector.
+
+### Research for the best parameters (used in GaussianBlur() or unsharpMask(), etc.) {#gapi_fb_res_params}
+
+### Parameters autoscaling {#gapi_fb_auto}

@@ -15,6 +15,7 @@
 
 #include <opencv2/highgui.hpp>
 
+//! [config]
 namespace config
 {
 constexpr char       kWinFaceBeautification[] = "FaceBeautificator";
@@ -37,13 +38,22 @@ constexpr bool       kClosedLine   = true;
 
 const size_t kNumPointsInHalfEllipse = 180 / config::kAngDelta + 1;
 } // namespace config
+//! [config]
 
 namespace
 {
+//! [vec_ROI]
 using VectorROI = std::vector<cv::Rect>;
+//! [vec_ROI]
+//! [gar_ROI]
 using GArrayROI = cv::GArray<cv::Rect>;
+//! [gar_ROI]
+//! [cont]
 using Contour   = std::vector<cv::Point>;
+//! [cont]
+//! [landm]
 using Landmarks = std::vector<cv::Point>;
+//! [landm]
 
 
 // Wrapper function
@@ -307,6 +317,14 @@ GAPI_OCV_KERNEL(GCPUFacePostProc, GFacePostProc)
 // This kernel is the facial landmarks detection output Mat parsing for every
 //  detected face; returns a tuple containing a vector of vectors of
 //  face elements' Points and a vector of vectors of jaw's Points:
+// There are 35 landmarks given by the default detector for each face
+//  in a frame; the first 18 of them are face elements (eyes, eyebrows,
+//  a nose, a mouth) and the last 17 - a jaw contour. The detector gives
+//  floating point values for landmarks' normed coordinates relatively
+//  to an input ROI (not the original frame).
+//  For more details please visit:
+// https://github.com/opencv/open_model_zoo/blob/master/intel_models/facial-landmarks-35-adas-0002
+//! [ld_pp_scl]
 GAPI_OCV_KERNEL(GCPULandmPostProc, GLandmPostProc)
 {
     static void run(const std::vector<cv::Mat>   &vctDetectResults,
@@ -314,13 +332,6 @@ GAPI_OCV_KERNEL(GCPULandmPostProc, GLandmPostProc)
                           std::vector<Landmarks> &vctPtsFaceElems,
                           std::vector<Contour>   &vctCntJaw)
     {
-        // There are 35 landmarks given by the default detector for each face
-        //  in a frame; the first 18 of them are face elements (eyes, eyebrows,
-        //  a nose, a mouth) and the last 17 - a jaw contour. The detector gives
-        //  floating point values for landmarks' normed coordinates relatively
-        //  to an input ROI (not the original frame).
-        //  For more details please visit:
-// https://github.com/opencv/open_model_zoo/blob/master/intel_models/facial-landmarks-35-adas-0002
         static constexpr int kNumFaceElems = 18;
         static constexpr int kNumTotal     = 35;
         const size_t numFaces = vctRects.size();
@@ -341,10 +352,8 @@ GAPI_OCV_KERNEL(GCPULandmPostProc, GLandmPostProc)
             ptsFaceElems.clear();
             for (int j = 0; j < kNumFaceElems * 2; j += 2)
             {
-                cv::Point pt =
-                        cv::Point(toIntRounded(data[j]   * vctRects[i].width),
-                                  toIntRounded(data[j+1] * vctRects[i].height))
-                        + vctRects[i].tl();
+                cv::Point pt = cv::Point(toIntRounded(data[j]   * vctRects[i].width),
+                                         toIntRounded(data[j+1] * vctRects[i].height)) + vctRects[i].tl();
                 ptsFaceElems.push_back(pt);
             }
             vctPtsFaceElems.push_back(ptsFaceElems);
@@ -353,27 +362,27 @@ GAPI_OCV_KERNEL(GCPULandmPostProc, GLandmPostProc)
             cntJaw.clear();
             for(int j = kNumFaceElems * 2; j < kNumTotal * 2; j += 2)
             {
-                cv::Point pt =
-                        cv::Point(toIntRounded(data[j]   * vctRects[i].width),
-                                  toIntRounded(data[j+1] * vctRects[i].height))
-                        + vctRects[i].tl();
+                cv::Point pt = cv::Point(toIntRounded(data[j]   * vctRects[i].width),
+                                         toIntRounded(data[j+1] * vctRects[i].height)) + vctRects[i].tl();
                 cntJaw.push_back(pt);
             }
             vctCntJaw.push_back(cntJaw);
         }
     }
 };
+//! [ld_pp_scl]
 
 // This kernel is the facial landmarks detection post-processing for every face
 //  detected before; output is a tuple of vectors of detected face contours and
 //  facial elements contours:
+//! [ld_pp_cnts]
 //! [kern_m_impl]
 GAPI_OCV_KERNEL(GCPUGetContours, GGetContours)
 {
-    static void run(const std::vector<Landmarks> &vctPtsFaceElems,
-                    const std::vector<Contour>   &vctCntJaw,
-                          std::vector<Contour>   &vctElemsContours,
-                          std::vector<Contour>   &vctFaceContours)
+    static void run(const std::vector<Landmarks> &vctPtsFaceElems,   // input
+                    const std::vector<Contour>   &vctCntJaw,         // input
+                          std::vector<Contour>   &vctElemsContours,  // output
+                          std::vector<Contour>   &vctFaceContours)   // output
     {
 //! [kern_m_impl]
         size_t numFaces = vctCntJaw.size();
@@ -381,11 +390,9 @@ GAPI_OCV_KERNEL(GCPUGetContours, GGetContours)
         CV_Assert(vctElemsContours.size() == 0ul);
         CV_Assert(vctFaceContours.size()  == 0ul);
         // vctFaceElemsContours will store all the face elements' contours found
-        //  on an input image, namely 4 elements (two eyes, nose, mouth)
-        //  for every detected face
+        //  in an input image, namely 4 elements (two eyes, nose, mouth) for every detected face:
         vctElemsContours.reserve(numFaces * 4);
-        // vctFaceElemsContours will store all the faces' contours found on
-        //  an input image
+        // vctFaceElemsContours will store all the faces' contours found in an input image:
         vctFaceContours.reserve(numFaces);
 
         Contour cntFace, cntLeftEye, cntRightEye, cntNose, cntMouth;
@@ -395,62 +402,43 @@ GAPI_OCV_KERNEL(GCPUGetContours, GGetContours)
         {
             // The face elements contours
             // A left eye:
-            // Approximating the lower eye contour by half-ellipse
-            //  (using eye points) and storing in cntLeftEye:
-            cntLeftEye = getEyeEllipse(vctPtsFaceElems[i][1],
-                                       vctPtsFaceElems[i][0],
-                                       config::kNumPointsInHalfEllipse + 3);
+            // Approximating the lower eye contour by half-ellipse (using eye points) and storing in cntLeftEye:
+            cntLeftEye = getEyeEllipse(vctPtsFaceElems[i][1], vctPtsFaceElems[i][0], config::kNumPointsInHalfEllipse + 3);
             // Pushing the left eyebrow clock-wise:
-            cntLeftEye.insert(cntLeftEye.cend(), {vctPtsFaceElems[i][12],
-                                                  vctPtsFaceElems[i][13],
-                                                  vctPtsFaceElems[i][14]});
+            cntLeftEye.insert(cntLeftEye.cend(), {vctPtsFaceElems[i][12], vctPtsFaceElems[i][13], vctPtsFaceElems[i][14]});
             // A right eye:
-            // Approximating the lower eye contour by half-ellipse
-            //  (using eye points) and storing in vctRightEye:
-            cntRightEye = getEyeEllipse(vctPtsFaceElems[i][2],
-                                        vctPtsFaceElems[i][3],
-                                        config::kNumPointsInHalfEllipse + 3);
+            // Approximating the lower eye contour by half-ellipse (using eye points) and storing in vctRightEye:
+            cntRightEye = getEyeEllipse(vctPtsFaceElems[i][2], vctPtsFaceElems[i][3], config::kNumPointsInHalfEllipse + 3);
             // Pushing the right eyebrow clock-wise:
-            cntRightEye.insert(cntRightEye.cend(), {vctPtsFaceElems[i][15],
-                                                    vctPtsFaceElems[i][16],
-                                                    vctPtsFaceElems[i][17]});
+            cntRightEye.insert(cntRightEye.cend(), {vctPtsFaceElems[i][15], vctPtsFaceElems[i][16], vctPtsFaceElems[i][17]});
             // A nose:
             // Storing the nose points clock-wise
             cntNose.clear();
-            cntNose.insert(cntNose.cend(), {vctPtsFaceElems[i][4],
-                                            vctPtsFaceElems[i][7],
-                                            vctPtsFaceElems[i][5],
-                                            vctPtsFaceElems[i][6]});
+            cntNose.insert(cntNose.cend(), {vctPtsFaceElems[i][4], vctPtsFaceElems[i][7],
+                                            vctPtsFaceElems[i][5], vctPtsFaceElems[i][6]});
             // A mouth:
             // Approximating the mouth contour by two half-ellipses
             //  (using mouth points) and storing in vctMouth:
-            cntMouth = getPatchedEllipse(vctPtsFaceElems[i][8],
-                                         vctPtsFaceElems[i][9],
-                                         vctPtsFaceElems[i][10],
-                                         vctPtsFaceElems[i][11]);
+            cntMouth = getPatchedEllipse(vctPtsFaceElems[i][8], vctPtsFaceElems[i][9],
+                                         vctPtsFaceElems[i][10], vctPtsFaceElems[i][11]);
             // Storing all the elements in a vector:
-            vctElemsContours.insert(vctElemsContours.cend(), {cntLeftEye,
-                                                              cntRightEye,
-                                                              cntNose,
-                                                              cntMouth});
+            vctElemsContours.insert(vctElemsContours.cend(), {cntLeftEye, cntRightEye, cntNose, cntMouth});
 
             // The face contour:
             // Approximating the forehead contour by half-ellipse
             //  (using jaw points) and storing in vctFace:
-            cntFace = getForeheadEllipse(vctCntJaw[i][0], vctCntJaw[i][16],
-                                         vctCntJaw[i][8],
-                                         config::kNumPointsInHalfEllipse +
-                                            vctCntJaw[i].size());
+            cntFace = getForeheadEllipse(vctCntJaw[i][0], vctCntJaw[i][16], vctCntJaw[i][8],
+                                         config::kNumPointsInHalfEllipse + vctCntJaw[i].size());
             // The ellipse is drawn clock-wise, but jaw contour points goes
             //  vice versa, so it's necessary to push cntJaw from the end
             //  to the begin using a reverse iterator:
-            std::copy(vctCntJaw[i].crbegin(), vctCntJaw[i].crend(),
-                      std::back_inserter(cntFace));
+            std::copy(vctCntJaw[i].crbegin(), vctCntJaw[i].crend(), std::back_inserter(cntFace));
             // Storing the face contour in another vector:
             vctFaceContours.push_back(cntFace);
         }
     }
 };
+//! [ld_pp_cnts]
 
 // GAPI subgraph functions
 inline cv::GMat unsharpMask(const cv::GMat &src,
@@ -642,23 +630,21 @@ int main(int argc, char** argv)
     {
 //! [fd_inf]
 //! [net_usg]
-        cv::GMat  gimgIn;
+        cv::GMat  gimgIn;                                                                           // the input frame
 //! [comp_str_1]
-        cv::GMat  faceOut  = cv::gapi::infer<custom::FaceDetector>(gimgIn);
+        cv::GMat  faceOut  = cv::gapi::infer<custom::FaceDetector>(gimgIn);                         // inference
 //! [net_usg]
-        GArrayROI garRects = custom::GFacePostProc::on(faceOut, gimgIn,
-                                                       config::kConfThresh);
+        GArrayROI garRects = custom::GFacePostProc::on(faceOut, gimgIn, config::kConfThresh);       // post-processing
 //! [fd_inf]
-        cv::GArray<Landmarks> garElems;
-        cv::GArray<Contour>   garJaws;
-        cv::GArray<cv::GMat> landmOut  = cv::gapi::infer<custom::LandmDetector>(
-                                                         garRects, gimgIn);
-        std::tie(garElems, garJaws)    = custom::GLandmPostProc::on(landmOut,
-                                                                 garRects);
-        cv::GArray<Contour> garElsConts;
-        cv::GArray<Contour> garFaceConts;
-        std::tie(garElsConts, garFaceConts) = custom::GGetContours::on(garElems,
-                                                                       garJaws);
+//! [ld_inf]
+        cv::GArray<Landmarks> garElems;                                                             // |
+        cv::GArray<Contour>   garJaws;                                                              // |the output arrays
+        cv::GArray<cv::GMat> landmOut  = cv::gapi::infer<custom::LandmDetector>(garRects, gimgIn);  // inference
+        std::tie(garElems, garJaws)    = custom::GLandmPostProc::on(landmOut, garRects);            // post-processing
+        cv::GArray<Contour> garElsConts;                                                            // face elements' contours
+        cv::GArray<Contour> garFaceConts;                                                           // the whole faces' contours
+        std::tie(garElsConts, garFaceConts) = custom::GGetContours::on(garElems, garJaws);          // getting contours
+//! [ld_inf]
         // Masks drawing
         // All masks are created as CV_8UC1
 //! [kern_usg]
@@ -695,7 +681,7 @@ int main(int argc, char** argv)
         cv::GMat gimgSharpMasked = custom::mask3C(gimgSharp, mskSharpG);
         cv::GMat gimgInMasked    = custom::mask3C(gimgIn,    mskNoFaces);
 //! [comp_str_2]
-        cv::GMat gimgBeautif = gimgBilatMasked + gimgSharpMasked + gimgInMasked;
+        cv::GMat gimgBeautif = gimgBilatMasked + gimgSharpMasked + gimgInMasked;                    // output #1
 //! [comp_str_2]
         // Drawing face boxes and landmarks if necessary:
         cv::GMat gimgTemp;
@@ -716,7 +702,7 @@ int main(int argc, char** argv)
 //! [comp_str_3]
         if (flgBoxes == true)
         {
-            /*cv::GMat*/ gimgShow = custom::GRectangle::on(gimgTemp, garRects, config::kClrGreen);
+            /*cv::GMat*/ gimgShow = custom::GRectangle::on(gimgTemp, garRects, config::kClrGreen);  // output #2
         }
 //! [comp_str_3]
         else
@@ -760,7 +746,8 @@ int main(int argc, char** argv)
     // Now we are ready to compile the pipeline to a stream with specified
     //  kernels, networks and image format expected to process
 //! [str_comp]
-    cv::GStreamingCompiled stream = pipeline.compileStreaming(cv::GMatDesc{CV_8U,3,cv::Size(640,480)}, cv::compile_args(kernels, networks));
+    cv::GStreamingCompiled stream = pipeline.compileStreaming(cv::GMatDesc{CV_8U,3,cv::Size(640,480)},
+                                                              cv::compile_args(kernels, networks));
 //! [str_comp]
     // Setting the source for the stream:
 //! [str_src]

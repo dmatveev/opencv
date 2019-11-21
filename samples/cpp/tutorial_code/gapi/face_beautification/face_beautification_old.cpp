@@ -628,7 +628,7 @@ int main(int argc, char** argv)
 
 //! [comp_old_1]
     // Declaring a graph
-    cv::GMat gimgIn;
+    cv::GMat gimgIn;                                                                                // the input frame
 //! [comp_old_1]
 
     // Infering
@@ -687,7 +687,7 @@ int main(int argc, char** argv)
     cv::GMat gimgSharpMasked = custom::mask3C(gimgSharp, mskSharpGaussed);
     cv::GMat gimgInMasked    = custom::mask3C(gimgIn, mskNoFaces);
 //! [comp_old_2]
-    cv::GMat gimgBeautif = gimgBilatMasked + gimgSharpMasked + gimgInMasked;
+    cv::GMat gimgBeautif = gimgBilatMasked + gimgSharpMasked + gimgInMasked;                        // output #1
 //! [comp_old_2]
 
     // Drawing face boxes and landmarks if necessary:
@@ -709,7 +709,7 @@ int main(int argc, char** argv)
 //! [comp_old_3]
     if (flgBoxes == true)
     {
-        /*cv::GMat*/ gimgInShow = custom::GRectangle::on(gimgTemp, garRects, config::kClrGreen);
+        /*cv::GMat*/ gimgInShow = custom::GRectangle::on(gimgTemp, garRects, config::kClrGreen);    // output #2
     }
     // The output nodes are receved somehow - it is not the point here
 //! [comp_old_3]
