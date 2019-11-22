@@ -198,6 +198,7 @@ cv::gimpl::GCompiler::GCompiler(const cv::GComputation &c,
                                 GCompileArgs           &&args,
                                 bool addMetaPasses)
     : m_c(c), m_metas(std::move(metas)), m_args(std::move(args))
+    , metaAdded(addMetaPasses)
 {
     using namespace std::placeholders;
 
@@ -261,7 +262,7 @@ cv::gimpl::GCompiler::GCompiler(const cv::GComputation &c,
     m_e.addPass("kernels", "check_islands_content", passes::checkIslandsContent);
 
     //Input metas may be empty when a graph is compiled for streaming
-    if (addMetaPasses)
+    if (metaAdded)
     {
         m_e.addPassStage("meta");
         m_e.addPass("meta", "initialize",   std::bind(passes::initMeta, _1, std::ref(m_metas)));

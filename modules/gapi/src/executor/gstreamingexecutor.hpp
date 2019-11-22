@@ -120,7 +120,8 @@ protected:
     void wait_shutdown();
 
 public:
-    explicit GStreamingExecutor(std::unique_ptr<ade::Graph> &&g_model, cv::GCompileArgs m_args, const GMetaArgs& in_metas);
+    explicit GStreamingExecutor(std::unique_ptr<ade::Graph> &&g_model
+                                , cv::GCompileArgs m_args, const GMetaArgs& in_metas);
     ~GStreamingExecutor();
     void setSource(GRunArgs &&args);
     void start();

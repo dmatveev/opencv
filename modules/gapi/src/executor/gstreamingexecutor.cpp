@@ -396,7 +396,8 @@ void collectorThread(std::vector<Q*> in_queues,
 }
 } // anonymous namespace
 
-cv::gimpl::GStreamingExecutor::GStreamingExecutor(std::unique_ptr<ade::Graph> &&g_model, cv::GCompileArgs m_args, const GMetaArgs &in_metas)
+cv::gimpl::GStreamingExecutor::GStreamingExecutor(std::unique_ptr<ade::Graph> &&g_model
+                                , cv::GCompileArgs m_args, const GMetaArgs &in_metas)
     : m_orig_graph(std::move(g_model))
     , m_island_graph(GModel::Graph(*m_orig_graph).metadata()
                      .get<IslandModel>().model)
@@ -423,6 +424,7 @@ cv::gimpl::GStreamingExecutor::GStreamingExecutor(std::unique_ptr<ade::Graph> &&
             return m_gim.metadata(nh).get<NodeKind>().k == NodeKind::ISLAND;
          });
 
+    //there is no metadata yet
     auto sorted = m_gim.metadata().get<ade::passes::TopologicalSortData>();
     for (auto nh : sorted.nodes())
     {
@@ -554,6 +556,45 @@ void cv::gimpl::GStreamingExecutor::setSource(GRunArgs &&ins)
                                            " currently supported!"));
     }
 
+    //extractiong meta from first frame
+    // Taked from emitterActorThread()
+    bool itsVideo = is_video(ins.front());
+
+    std::vector<cv::GRunArg> datas;
+    if (itsVideo)
+    {
+        for (auto it : ade::util::indexed(m_emitters))
+        {
+            const auto eh = ade::util::value(it);
+            auto emitter = m_gim.metadata(eh).get<Emitter>().object;
+        
+            //FIXME: dataWasObtain show only last
+            bool dataWasObtain;
+    
+            cv::GRunArg tmp_data;
+            dataWasObtain = emitter->pull(tmp_data);
+
+            datas.emplace_back(tmp_data);
+        }
+
+        // Get meta data from datas and push it to m_metas
+        // Should I usr std::zip ?? (YES!!!!)
+        for (auto it : ade::util::zip(ade::util::toRange(datas),
+                                      ade::util::toRange(m_metas)))
+        {
+            auto d = std::get<0>(it);
+            auto m = std::get<1>(it);
+        
+            m = cv::descr_of(d);
+            //std::get<1>(it) = cv::descr_of(ade::util::value<0>(it));
+        }
+    }
+//    for (auto d = datas.front(), auto m = m_metas.front()
+//        ; d < datas.end(), m < m_metas.end(); ++d, ++m)
+//    {
+//        m = cv::descr_of(d);
+//    }
+
     GCompiler::runMetaPasses(*m_orig_graph.get(), m_metas);
     GCompiler::compileIslands(*m_orig_graph.get(), m_comp_args);
 
@@ -575,6 +616,38 @@ void cv::gimpl::GStreamingExecutor::setSource(GRunArgs &&ins)
 
         op.out_metas = output_metas;
     }
+
+
+    //PIHAEM DATA VO VSE OCHEREDI
+    if (itsVideo)
+    {
+        for (auto it : ade::util::zip(ade::util::toRange(m_emitters),
+                                      ade::util::toRange(datas)))
+        {
+            //for ( auto it : ade::util::indexed(m_emitters) )
+            const auto eh = std::get<0>(it);
+            auto d = std::get<1>(it);
+            auto out_queues = reader_queues(*m_island_graph
+                                                , eh->outNodes().front());
+            if (true)
+            {
+                // // On success, broadcast it to our readers
+                for (auto &&oq : out_queues)
+                {
+                    // FIXME: FOR SOME REASON, oq->push(Cmd{data}) doesn't work!!
+                    // empty mats are arrived to the receivers!
+                    // There may be a fatal bug in our variant!
+                    const auto data = d;
+                    oq->push(Cmd{data});
+                }
+            }
+            else
+            {
+                //throw some
+            }
+        }
+    }
+    //END OF PIHAEM DATA VO VSE OCHEREDI
 
     // Walk through the protocol, set-up emitters appropriately
     // There's a 1:1 mapping between emitters and corresponding data inputs.

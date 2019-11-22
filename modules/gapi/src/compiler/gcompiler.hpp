@@ -31,6 +31,8 @@ class GAPI_EXPORTS GCompiler
 
     std::vector<std::unique_ptr<ade::Graph>> m_all_patterns;  // built patterns from transformations
 
+    bool metaAdded = true;
+
     void validateInputMeta();
     void validateOutProtoArgs();
 
