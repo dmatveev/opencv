@@ -833,6 +833,7 @@ TEST_P(GAPI_Streaming, SmokeTest_VideoConstSource_Set_In_SetSource)
     cv::GMat out = blr - in;
     std::size_t ref_frames = 0u;
     cv::Mat tmp;
+    cv::Mat in_const = cv::Mat::eye(cv::Size(256,256), CV_8UC3);
     //in mats descr cv::GMatDesc{CV_8U,3,cv::Size{256,256}},
     //in mats descr cv::GMatDesc{CV_8U,3,cv::Size{768,576}},
                           
@@ -840,7 +841,7 @@ TEST_P(GAPI_Streaming, SmokeTest_VideoConstSource_Set_In_SetSource)
         .compileStreaming({}
                         , cv::compile_args(cv::gapi::use_only{GetParam()}));
 
-    testc.setSource(cv::gin(
+    testc.setSource(cv::gin(in_const,
             gapi::wip::make_src<cv::gapi::wip::GCaptureSource>(findDataFile("cv/video/768x576.avi"))));
     testc.start();
     std::size_t test_frames = 0u;

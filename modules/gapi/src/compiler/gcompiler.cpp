@@ -369,7 +369,7 @@ void cv::gimpl::GCompiler::validateOutProtoArgs()
 
 cv::gimpl::GCompiler::GPtr cv::gimpl::GCompiler::generateGraph()
 {
-    validateInputMeta();
+    //validateInputMeta();
     validateOutProtoArgs();
     return makeGraph(m_c.priv().m_ins, m_c.priv().m_outs);
 }
