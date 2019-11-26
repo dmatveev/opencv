@@ -357,15 +357,10 @@ GAPI_OCV_KERNEL(GCPUGetContours, GGetContours)
         {
             // The face elements contours
             // A left eye:
-            // Approximating the lower eye contour by half-ellipse
-            //  (using eye points) and storing in cntLeftEye:
-            cntLeftEye = getEyeEllipse(vctPtsFaceElems[i][1],
-                                       vctPtsFaceElems[i][0],
-                                       config::kNumPointsInHalfEllipse + 3);
-            // Pushing the left eyebrow clock-wise:
-            cntLeftEye.insert(cntLeftEye.cend(), {vctPtsFaceElems[i][12],
-                                                  vctPtsFaceElems[i][13],
-                                                  vctPtsFaceElems[i][14]});
+//! [ld_pp_eye]
+            cntLeftEye = getEyeEllipse(vctPtsFaceElems[i][1], vctPtsFaceElems[i][0], config::kNumPointsInHalfEllipse + 3);
+            cntLeftEye.insert(cntLeftEye.cend(), {vctPtsFaceElems[i][12], vctPtsFaceElems[i][13], vctPtsFaceElems[i][14]});
+//! [ld_pp_eye]
             // A right eye:
             // Approximating the lower eye contour by half-ellipse
             //  (using eye points) and storing in vctRightEye:
@@ -386,10 +381,10 @@ GAPI_OCV_KERNEL(GCPUGetContours, GGetContours)
             // A mouth:
             // Approximating the mouth contour by two half-ellipses
             //  (using mouth points) and storing in vctMouth:
-            cntMouth = getPatchedEllipse(vctPtsFaceElems[i][8],
-                                         vctPtsFaceElems[i][9],
-                                         vctPtsFaceElems[i][10],
-                                         vctPtsFaceElems[i][11]);
+//! [ld_pp_mth]
+            cntMouth = getPatchedEllipse(vctPtsFaceElems[i][8], vctPtsFaceElems[i][9],
+                                         vctPtsFaceElems[i][10], vctPtsFaceElems[i][11]);
+//! [ld_pp_mth]
             // Storing all the elements in a vector:
             vctFaceElemsContours.insert(vctFaceElemsContours.cend(),
                                         {cntLeftEye, cntRightEye, cntNose,
@@ -398,15 +393,11 @@ GAPI_OCV_KERNEL(GCPUGetContours, GGetContours)
             // The face contour:
             // Approximating the forehead contour by half-ellipse
             //  (using jaw points) and storing in vctFace:
-            cntFace = getForeheadEllipse(vctCntJaw[i][0], vctCntJaw[i][16],
-                                         vctCntJaw[i][8],
-                                         config::kNumPointsInHalfEllipse +
-                                            vctCntJaw[i].size());
-            // The ellipse is drawn clock-wise, but jaw contour points goes
-            //  vice versa, so it's necessary to push cntJaw from the end
-            //  to the begin using a reverse iterator:
-            std::copy(vctCntJaw[i].crbegin(), vctCntJaw[i].crend(),
-                      std::back_inserter(cntFace));
+//! [ld_pp_fhd]
+            cntFace = getForeheadEllipse(vctCntJaw[i][0], vctCntJaw[i][16], vctCntJaw[i][8],
+                                         config::kNumPointsInHalfEllipse + vctCntJaw[i].size());
+            std::copy(vctCntJaw[i].crbegin(), vctCntJaw[i].crend(), std::back_inserter(cntFace));
+//! [ld_pp_fhd]
             // Storing the face contour in another vector:
             vctFaceContours.push_back(cntFace);
         }
@@ -651,35 +642,22 @@ int main(int argc, char** argv)
 
     // Masks drawing
     // All masks are created as CV_8UC1
-    cv::GMat mskSharp        =
-            custom::GFillPolyGContours::on(gimgIn, garFaceElemsContours);
-    cv::GMat mskSharpGaussed =
-            cv::gapi::gaussianBlur(mskSharp, config::kGaussKernelSize,
-                                   config::kGaussSigma);
+//! [msk_ppline]
+    cv::GMat mskSharp        = custom::GFillPolyGContours::on(gimgIn, garFaceElemsContours);
+    cv::GMat mskSharpGaussed = cv::gapi::gaussianBlur(mskSharp, config::kGaussKernelSize, config::kGaussSigma);
 
-    cv::GMat mskBlur         =
-            custom::GFillPolyGContours::on(gimgIn, garFaceContours);
-    cv::GMat mskBlurGaussed  =
-            cv::gapi::gaussianBlur(mskBlur, config::kGaussKernelSize,
-                                   config::kGaussSigma);
-    // The first argument in mask() is Blur as we want to subtract from Blur
-    //  the next step
-    cv::GMat mskBlurFinal    =
-            mskBlurGaussed - cv::gapi::mask(mskBlurGaussed, mskSharpGaussed);
+    cv::GMat mskBlur         = custom::GFillPolyGContours::on(gimgIn, garFaceContours);
+    cv::GMat mskBlurGaussed  = cv::gapi::gaussianBlur(mskBlur, config::kGaussKernelSize, config::kGaussSigma);
+    cv::GMat mskBlurFinal    = mskBlurGaussed - cv::gapi::mask(mskBlurGaussed, mskSharpGaussed);
 
-    cv::GMat mskFacesGaussed =
-            mskBlurFinal + mskSharpGaussed;
-    cv::GMat mskFacesWhite   =
-            cv::gapi::threshold(mskFacesGaussed, 0, 255, cv::THRESH_BINARY);
-    cv::GMat mskNoFaces      =
-            cv::gapi::bitwise_not(mskFacesWhite);
+    cv::GMat mskFacesGaussed = mskBlurFinal + mskSharpGaussed;
+    cv::GMat mskFacesWhite   = cv::gapi::threshold(mskFacesGaussed, 0, 255, cv::THRESH_BINARY);
+    cv::GMat mskNoFaces      = cv::gapi::bitwise_not(mskFacesWhite);
+//! [msk_ppline]
 
-    cv::GMat gimgBilat = custom::GBilateralFilter::on(gimgIn,
-                                                      config::kBilatDiameter,
-                                                      config::kBilatSigmaColor,
+    cv::GMat gimgBilat = custom::GBilateralFilter::on(gimgIn, config::kBilatDiameter, config::kBilatSigmaColor,
                                                       config::kBilatSigmaSpace);
-    cv::GMat gimgSharp = custom::unsharpMask(gimgIn, config::kUnsharpSigma,
-                                             config::kUnsharpStrength);
+    cv::GMat gimgSharp = custom::unsharpMask(gimgIn, config::kUnsharpSigma, config::kUnsharpStrength);
     // Applying the masks
     // Custom function mask3C() should be used instead of just gapi::mask()
     //  as mask() provides CV_8UC1 source only (and we have CV_8U3C)

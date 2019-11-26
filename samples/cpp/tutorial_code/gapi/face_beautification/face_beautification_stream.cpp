@@ -64,10 +64,12 @@ template<typename Tp> inline int toIntRounded(const Tp x)
 }
 //! [toInt]
 
+//! [toDbl]
 template<typename Tp> inline double toDouble(const Tp x)
 {
     return static_cast<double>(x);
 }
+//! [toDbl]
 
 std::string getWeightsPath(const std::string &mdlXMLPath) // mdlXMLPath =
                                                           // "The/Full/Path.xml"
@@ -401,37 +403,39 @@ GAPI_OCV_KERNEL(GCPUGetContours, GGetContours)
         for (size_t i = 0ul; i < numFaces; i++)
         {
             // The face elements contours
+
             // A left eye:
             // Approximating the lower eye contour by half-ellipse (using eye points) and storing in cntLeftEye:
             cntLeftEye = getEyeEllipse(vctPtsFaceElems[i][1], vctPtsFaceElems[i][0], config::kNumPointsInHalfEllipse + 3);
             // Pushing the left eyebrow clock-wise:
             cntLeftEye.insert(cntLeftEye.cend(), {vctPtsFaceElems[i][12], vctPtsFaceElems[i][13], vctPtsFaceElems[i][14]});
+
             // A right eye:
             // Approximating the lower eye contour by half-ellipse (using eye points) and storing in vctRightEye:
             cntRightEye = getEyeEllipse(vctPtsFaceElems[i][2], vctPtsFaceElems[i][3], config::kNumPointsInHalfEllipse + 3);
             // Pushing the right eyebrow clock-wise:
             cntRightEye.insert(cntRightEye.cend(), {vctPtsFaceElems[i][15], vctPtsFaceElems[i][16], vctPtsFaceElems[i][17]});
+
             // A nose:
             // Storing the nose points clock-wise
             cntNose.clear();
             cntNose.insert(cntNose.cend(), {vctPtsFaceElems[i][4], vctPtsFaceElems[i][7],
                                             vctPtsFaceElems[i][5], vctPtsFaceElems[i][6]});
+
             // A mouth:
-            // Approximating the mouth contour by two half-ellipses
-            //  (using mouth points) and storing in vctMouth:
+            // Approximating the mouth contour by two half-ellipses (using mouth points) and storing in vctMouth:
             cntMouth = getPatchedEllipse(vctPtsFaceElems[i][8], vctPtsFaceElems[i][9],
                                          vctPtsFaceElems[i][10], vctPtsFaceElems[i][11]);
+
             // Storing all the elements in a vector:
             vctElemsContours.insert(vctElemsContours.cend(), {cntLeftEye, cntRightEye, cntNose, cntMouth});
 
             // The face contour:
-            // Approximating the forehead contour by half-ellipse
-            //  (using jaw points) and storing in vctFace:
+            // Approximating the forehead contour by half-ellipse (using jaw points) and storing in vctFace:
             cntFace = getForeheadEllipse(vctCntJaw[i][0], vctCntJaw[i][16], vctCntJaw[i][8],
                                          config::kNumPointsInHalfEllipse + vctCntJaw[i].size());
-            // The ellipse is drawn clock-wise, but jaw contour points goes
-            //  vice versa, so it's necessary to push cntJaw from the end
-            //  to the begin using a reverse iterator:
+            // The ellipse is drawn clock-wise, but jaw contour points goes vice versa, so it's necessary to push cntJaw
+            //  from the end to the begin using a reverse iterator:
             std::copy(vctCntJaw[i].crbegin(), vctCntJaw[i].crend(), std::back_inserter(cntFace));
             // Storing the face contour in another vector:
             vctFaceContours.push_back(cntFace);
@@ -452,20 +456,21 @@ inline cv::GMat mask3C(const cv::GMat &src,
 // Functions implementation:
 // Returns an angle (in degrees) between a line given by two Points and
 //  the horison. Note that the result depends on the arguments order:
-inline int custom::getLineInclinationAngleDegrees(const cv::Point &ptLeft,
-                                                  const cv::Point &ptRight)
+//! [ld_pp_incl]
+inline int custom::getLineInclinationAngleDegrees(const cv::Point &ptLeft, const cv::Point &ptRight)
 {
     const cv::Point residual = ptRight - ptLeft;
     if (residual.y == 0 && residual.x == 0)
         return 0;
     else
-        return toIntRounded(atan2(toDouble(residual.y), toDouble(residual.x))
-                                * 180.0 / M_PI);
+        return toIntRounded(atan2(toDouble(residual.y), toDouble(residual.x)) * 180.0 / M_PI);
 }
+//! [ld_pp_incl]
 
 // Approximates a forehead by half-ellipse using jaw points and some geometry
 //  and then returns points of the contour; "capacity" is used to reserve enough
 //  memory as there will be other points inserted.
+//! [ld_pp_fhd]
 inline Contour custom::getForeheadEllipse(const cv::Point &ptJawLeft,
                                           const cv::Point &ptJawRight,
                                           const cv::Point &ptJawLower,
@@ -473,58 +478,42 @@ inline Contour custom::getForeheadEllipse(const cv::Point &ptJawLeft,
 {
     Contour cntForehead;
     cntForehead.reserve(std::max(capacity, config::kNumPointsInHalfEllipse));
-    // The point amid the top two points of a jaw:
     const cv::Point ptFaceCenter((ptJawLeft + ptJawRight) / 2);
-    // This will be the center of the ellipse.
-
-    // The angle between the jaw and the vertical:
     const int angFace = getLineInclinationAngleDegrees(ptJawLeft, ptJawRight);
-    // This will be the inclination of the ellipse
-
-    // Counting the half-axis of the ellipse:
     const double jawWidth  = cv::norm(ptJawLeft - ptJawRight);
-    // A forehead width equals the jaw width, and we need a half-axis:
-    const int axisX        = toIntRounded(jawWidth / 2.0);
-
+    const int    axisX     = toIntRounded(jawWidth / 2.0);
     const double jawHeight = cv::norm(ptFaceCenter - ptJawLower);
-    // According to research, in average a forehead is approximately 2/3 of
-    //  a jaw:
     const int axisY        = toIntRounded(jawHeight * 2 / 3.0);
-
-    // We need the upper part of an ellipse:
     static constexpr int kAngForeheadStart = 180;
     static constexpr int kAngForeheadEnd   = 360;
-    cv::ellipse2Poly(ptFaceCenter, cv::Size(axisX, axisY), angFace,
-                     kAngForeheadStart, kAngForeheadEnd, config::kAngDelta,
+    cv::ellipse2Poly(ptFaceCenter, cv::Size(axisX, axisY), angFace, kAngForeheadStart, kAngForeheadEnd, config::kAngDelta,
                      cntForehead);
     return cntForehead;
 }
+//! [ld_pp_fhd]
 
 // Approximates the lower eye contour by half-ellipse using eye points and some
 //  geometry and then returns points of the contour; "capacity" is used
 //  to reserve enough memory as there will be other points inserted.
-inline Contour custom::getEyeEllipse(const cv::Point &ptLeft,
-                                     const cv::Point &ptRight,
-                                     const size_t     capacity = 0)
+//! [ld_pp_eye]
+inline Contour custom::getEyeEllipse(const cv::Point &ptLeft, const cv::Point &ptRight, const size_t capacity = 0)
 {
     Contour cntEyeBottom;
     cntEyeBottom.reserve(std::max(capacity, config::kNumPointsInHalfEllipse));
     const cv::Point ptEyeCenter((ptRight + ptLeft) / 2);
     const int angle = getLineInclinationAngleDegrees(ptLeft, ptRight);
     const int axisX = toIntRounded(cv::norm(ptRight - ptLeft) / 2.0);
-    // According to research, in average a Y axis of an eye is approximately
-    //  1/3 of an X one.
     const int axisY = axisX / 3;
-    // We need the lower part of an ellipse:
     static constexpr int kAngEyeStart = 0;
     static constexpr int kAngEyeEnd   = 180;
-    cv::ellipse2Poly(ptEyeCenter, cv::Size(axisX, axisY), angle, kAngEyeStart,
-                     kAngEyeEnd, config::kAngDelta, cntEyeBottom);
+    cv::ellipse2Poly(ptEyeCenter, cv::Size(axisX, axisY), angle, kAngEyeStart, kAngEyeEnd, config::kAngDelta, cntEyeBottom);
     return cntEyeBottom;
 }
+//! [ld_pp_eye]
 
 //This function approximates an object (a mouth) by two half-ellipses using
 //  4 points of the axes' ends and then returns points of the contour:
+//! [ld_pp_mth]
 inline Contour custom::getPatchedEllipse(const cv::Point &ptLeft,
                                          const cv::Point &ptRight,
                                          const cv::Point &ptUp,
@@ -538,28 +527,25 @@ inline Contour custom::getPatchedEllipse(const cv::Point &ptLeft,
     // The top half-ellipse:
     Contour cntMouthTop;
     const int axisYTop = toIntRounded(cv::norm(ptMouthCenter - ptUp));
-    // We need the upper part of an ellipse:
     static constexpr int angTopStart = 180;
     static constexpr int angTopEnd   = 360;
-    cv::ellipse2Poly(ptMouthCenter, cv::Size(axisX, axisYTop), angMouth,
-                     angTopStart, angTopEnd, config::kAngDelta, cntMouthTop);
+    cv::ellipse2Poly(ptMouthCenter, cv::Size(axisX, axisYTop), angMouth, angTopStart, angTopEnd, config::kAngDelta, cntMouthTop);
 
     // The bottom half-ellipse:
     Contour cntMouth;
     const int axisYBot = toIntRounded(cv::norm(ptMouthCenter - ptDown));
-    // We need the lower part of an ellipse:
     static constexpr int angBotStart = 0;
     static constexpr int angBotEnd   = 180;
-    cv::ellipse2Poly(ptMouthCenter, cv::Size(axisX, axisYBot), angMouth,
-                     angBotStart, angBotEnd, config::kAngDelta, cntMouth);
+    cv::ellipse2Poly(ptMouthCenter, cv::Size(axisX, axisYBot), angMouth, angBotStart, angBotEnd, config::kAngDelta, cntMouth);
 
     // Pushing the upper part to vctOut
     cntMouth.reserve(cntMouth.size() + cntMouthTop.size());
-    std::copy(cntMouthTop.cbegin(), cntMouthTop.cend(),
-              std::back_inserter(cntMouth));
+    std::copy(cntMouthTop.cbegin(), cntMouthTop.cend(), std::back_inserter(cntMouth));
     return cntMouth;
 }
+//! [ld_pp_mth]
 
+//! [unsh]
 inline cv::GMat custom::unsharpMask(const cv::GMat &src,
                                     const int       sigma,
                                     const float     strength)
@@ -568,6 +554,7 @@ inline cv::GMat custom::unsharpMask(const cv::GMat &src,
     cv::GMat laplacian = custom::GLaplacian::on(blurred, CV_8U);
     return (src - (laplacian * strength));
 }
+//! [unsh]
 
 inline cv::GMat custom::mask3C(const cv::GMat &src,
                                const cv::GMat &mask)

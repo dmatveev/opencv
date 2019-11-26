@@ -247,13 +247,16 @@ to avoid detector's mistakes; so the Mat parsing looks like this code:
 
 Some points to be mentioned about this kernel:
 
+- It takes in a `cv::Mat` of detections and a `cv::Mat` of the input frame; it
+gives out an array of ROI's where faces have been detected.
+
 - There is `cv::Mat` data parsing by the pointer on a float used.
 
 - Float numbers we've got from the Mat are between 0 and 1 and denote normalized
 coordinates; to get the real pixel coordinates we should multiply it by the
 image sizes respectively to the directions. To be fully accurate, the received
-numbers should be then rounded in the right way and casted to `int` to construct
-integer Points; these operations have been wrapped by `toIntRounded()`:
+numbers should be then rounded the right way and casted to `int` to construct
+integer Points; these operations have been wrapped in `toIntRounded()`:
 
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp toInt
 
@@ -262,9 +265,9 @@ corners.
 
 - By far the most important thing here is solving an issue that sometimes
 detector spits out coordinates located outside of the image; if we pass such an
-ROI to be processed, errors of the landmarks detector will occure. To handle
-these cases the frame box `borders` is created and then intersected with
-the face rect (by `operator&()`) so the ROI saved in `outFaces` are for sure
+ROI to be processed, errors of the landmarks detector will occure. The frame box
+`borders` is created and then intersected with the face rect (by `operator&()`)
+to handle these cases and save the ROI in `outFaces` which is for sure
 inside the frame.
 
 ## Facial landmarks detector inference and post-processing {#gapi_fb_landm_detect}
@@ -278,7 +281,7 @@ arrays of points which are naturally contours (ordered sets of points):
 
 The array with all landmarks is an array of points; syntactically it is a `Contour`
 though semantically is not a contour
-so I put another type `Landmarks` which syntactically is equal to `Contour`
+so I use another type `Landmarks` which syntactically is equal to `Contour`
 type to underline semantical differences:
 
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp landm
@@ -287,46 +290,125 @@ Post-processing of the Mat is required here too: there are 35 landmarks given by
 the detector for each face in a frame; the first 18 of them are facial elements
 (eyes, eyebrows, a nose, a mouth) and the last 17 --- a jaw contour. Landmarks
 are floating point values of coordinates normalized relatively to an input ROI
-(not the original frame). What is of the same importance: for the further goals
-we need contours of eyes, mouths, faces, etc., not the landmarks.
+(not the original frame). What is of the same importance, we need contours of
+eyes, mouths, faces, etc., not the landmarks, for the further goals.
 So the process is split into two parts.
 
 ### Normalized points scaling {#gapi_fb_ld_scl}
 
 The first step is to denormalize landmarks' coordinates to the real pixel
 coordinates of the source frame. Also we are able to divide points into two
-groups here --- face elements and a jaw contour. This is a described kernel:
+groups here --- face elements and a jaw contour. This is a kernel that does the
+described actions:
 
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp ld_pp_scl
 
 Some points:
 
+- It takes in a `cv::Mat` of detections and the array of the ROI's from the
+previous step; it gives out an array of facial elements' points' arrays and an
+array of jaw contours.
+
 - Data parsing is the same --- by pointer.
 
-- We iterate by 2 in one step because `Point.x` and `Point.y` are contained
-successively.
+- We iterate by 2 in one step because for every point `Point.x` and `Point.y`
+are contained successively.
 
-- Since the coordinates are related to an input ROI, the values of the ROI's
-top-left corner coordinates should be added.
-
-The outputs are vectors containing points of facial elements and jaw contours.
+- Since the coordinates are related to an input ROI, the coordinates of the
+ROI's top-left corner should be added.
 
 ### Contours getting {#gapi_fb_ld_cnts}
 
 The more certain idea of this face beautification algorithm is to smooth out the
 skin and to make eyes, a nose and a mouth sharper. So we need contours of facial
 elements based on landmarks and the whole face contour (not only a jaw) as they
-are drawn in the picture of the pipeline above. Let's
-see all the sequence of actions have been made in the following kernel:
+are drawn in the picture:
+
+![Contours](pics/contours.png)
+
+To increase code readability, the `GGetContours` kernel is split up to pieces,
+which are wrapped in separate functions, with the goal to describe just the
+sequence of actions:
 
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp ld_pp_cnts
+
+The kernel takes in arrays of facial elements' points' arrays and of jaw
+contours from the previous step and gives out arrays of elements' finished
+contours and of face fully contours; in other words, outputs are, the first,
+an array of contours to be sharped and, the second, another one to be
+smoothed.
 
 To understand the points numeration we should just see the following
 illustration:
 
 ![Landmarks order](pics/landmarks_illustration.png)
 
+The separate discussion of every element drawing follows.
 
+#### Eye contour getting {#gapi_fb_ld_eye}
+
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_old.cpp ld_pp_eye
+
+The function used to get the bottom side of an eye contour should be discussed:
+
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp ld_pp_eye
+
+Briefly, this function restores the bottom side of an eye by a half-ellipse
+based on two points in left and right eyecorners.
+
+As we can see, to minimize the frequency of memory allocations the
+`std::vector::reserve()` function is used; we can pass the real quantity of
+points to store in `cntEyeBottom` through the `capacity` argument if we know it
+apriory.
+
+The rest of the function is parameters preparation for the `cv::ellipse2Poly()`
+function call.
+
+![Ellipse2poly illustration](modules/imgproc/doc/pics/ellipse.svg)
+
+What is to be defined:
+- the ellipse center and the X axis counted by two eye Points;
+- the Y axis counted according to the assumption that an average eye width is 1/3
+of its length;
+- the start and end angles which are 0 and 180 (see the picture above)
+- the angle delta: how frequently (which causes by how much points) the ellipse
+will be approximated;
+- the inclination angle of axes counted via the
+`getLineInclinationAngleDegrees()` function:
+
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp toDbl
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp ld_pp_incl
+
+The important thing is use of the `atan2()` function, which can return negative
+value depending on the `x` and `y` signs; this fact allows to get the right
+angle even in case of upside-down face arrangment (if we put the points in the
+right order, of course).
+
+Back to the `getEyeEllipse` function, it returns a constructed `Contour`
+to use the RVO.
+
+After the bottom side of an eye is approximated, we just push the eyebrow points
+to the contour in the right order - and the eye is finished!
+
+#### Mouth contour getting {#gapi_fb_ld_mth}
+
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_old.cpp ld_pp_mth
+
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp ld_pp_mth
+
+#### Forehead contour getting {#gapi_fb_ld_fhd}
+
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_old.cpp ld_pp_fhd
+
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp ld_pp_fhd
+
+## Masks drawing {#gapi_fb_masks_drw}
+
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_old.cpp msk_ppline
+
+## UnsharpMask() algorithm {#gapi_fb_unsh}
+
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp unsh
 
 ## Possible further improvements {#gapi_fb_to_improve}
 
