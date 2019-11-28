@@ -655,6 +655,7 @@ int main(int argc, char** argv)
     cv::GMat mskNoFaces      = cv::gapi::bitwise_not(mskFacesWhite);
 //! [msk_ppline]
 
+//! [msk_appl]
     cv::GMat gimgBilat = custom::GBilateralFilter::on(gimgIn, config::kBilatDiameter, config::kBilatSigmaColor,
                                                       config::kBilatSigmaSpace);
     cv::GMat gimgSharp = custom::unsharpMask(gimgIn, config::kUnsharpSigma, config::kUnsharpStrength);
@@ -667,6 +668,7 @@ int main(int argc, char** argv)
 //! [comp_old_2]
     cv::GMat gimgBeautif = gimgBilatMasked + gimgSharpMasked + gimgInMasked;                        // output #1
 //! [comp_old_2]
+//! [msk_appl]
 
     // Drawing face boxes and landmarks if necessary:
     cv::GMat gimgTemp;

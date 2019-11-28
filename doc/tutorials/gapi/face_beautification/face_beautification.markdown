@@ -7,9 +7,10 @@
 # Introduction {#gapi_fb_intro}
 
 In this tutorial you are going to learn:
-* How to use Inference-API to infer networks inside a graph;
 * How to create a custom kernel implementation (using OpenCV backend);
-* How to process a videostream inside a graph using Streaming-API.
+* How to use Inference-API to infer networks inside a graph;
+* How to process a videostream inside a graph using Streaming-API;
+* The main ideas of the Face Beautification algorithm.
 
 You can find source code in the `modules/gapi/samples/face_beautification.cpp`
 of the OpenCV source code library.
@@ -31,7 +32,7 @@ new G-API kernel we have to take 3 main steps:
 ### 1) New kernel interface definition {#gapi_fb_c_k_1}
 
 There are a couple of macros to define a new kernel. The first is
-G_TYPED_KERNEL(), which declares a new operation properties:
+`G_TYPED_KERNEL()`, which declares a new operation properties:
 
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp kern_decl
 
@@ -39,7 +40,7 @@ To get the full description, see [Defining a kernel](@ref gapi_defining_kernel).
 
 A little but significant adjustment has to be made when a kernel with a multiple
 return value is going to be defined. For this case, we should use another
-macro, G_TYPED_KERNEL_M():
+macro, `G_TYPED_KERNEL_M()`:
 
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp kern_m_decl
 
@@ -47,12 +48,12 @@ As we can see, almost everything is unchanged (speaking about the highest
 level, of course). For a note: the sign to use the modified macro is the
 `std::tuple` appearance as a kernel signature output.
 
-The outMeta() function of such a kernel must return a tuple too.
+The `outMeta()` function of such a kernel must return a tuple too.
 
 ### 2) Specific backend kernel implementation. {#gapi_fb_c_k_2}
 
 The second step begins with a macro too. If we want to implement a CPU kernel
-version using OpenCV functions, we should apply GAPI_OCV_KERNEL() macro, which
+version using OpenCV functions, we should apply `GAPI_OCV_KERNEL()` macro, which
 defines what the operation should do:
 
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp kern_impl
@@ -67,7 +68,7 @@ are just put after input ones keeping the order:
 
 ### 3) Custom kernels declaration for a graph {#gapi_fb_c_k_3}
 
-To allow a specific pipeline to use our custom kernels, we have to pass them
+To allow a certain pipeline to use our custom kernels, we have to pass them
 to a graph by compile arguments:
 
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_old.cpp kern_pass_1
@@ -79,10 +80,13 @@ Congratulations! Now we are able to use our new kernel in the pipeline. E.g.:
 
 ## Networks inference using Inference-API {#gapi_fb_inference}
 
-Two models from OMZ have been used in this sample: the face detector
-(https://github.com/opencv/open_model_zoo/tree/master/models/intel/face-detection-adas-0001)
-and the facial landmarks detector
-(https://github.com/opencv/open_model_zoo/blob/master/models/intel/facial-landmarks-35-adas-0002/description/facial-landmarks-35-adas-0002.md).
+Two models from OMZ have been used in this sample: the
+<a href="https://github.com/opencv/open_model_zoo/tree/master/models/intel
+/face-detection-adas-0001">face detector</a>
+and the
+<a href="https://github.com/opencv/open_model_zoo/blob/master/models/intel
+/facial-landmarks-35-adas-0002/description/facial-landmarks-35-adas-0002.md">
+facial landmarks detector</a>.
 
 Let's prepare our chosen networks for being processed by G-API's Inference-API.
 Providing a new network support is quite similar to a new kernel implementation.
@@ -96,12 +100,12 @@ To define a network we should use the special macro G_API_NET:
 
 Similar to a kernel macro, it takes three arguments to register a new type. They
 are:
-1. Network interface name -- also serves as a name of new type defined
+1. Network interface name --- also serves as a name of new type defined
    with this macro;
-2. Network signature -- an `std::function<>`-like signature which defines
+2. Network signature      --- an `std::function<>`-like signature which defines
    inputs and outputs;
-3. Network's unique name -- used to identify it within the system when the type
-   is stripped.
+3. Network's unique name  --- used to identify it within the system when the
+   type is stripped.
 
 ### 2) Network parametrization {#gapi_fb_i_2}
 
@@ -319,7 +323,7 @@ ROI's top-left corner should be added.
 
 ### Contours getting {#gapi_fb_ld_cnts}
 
-The more certain idea of this face beautification algorithm is to smooth out the
+The more definite idea of this face beautification algorithm is to smooth out the
 skin and to make eyes, a nose and a mouth sharper. So we need contours of facial
 elements based on landmarks and the whole face contour (not only a jaw) as they
 are drawn in the picture:
@@ -332,11 +336,11 @@ sequence of actions:
 
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp ld_pp_cnts
 
-The kernel takes in arrays of facial elements' points' arrays and of jaw
-contours from the previous step and gives out arrays of elements' finished
-contours and of face fully contours; in other words, outputs are, the first,
-an array of contours to be sharped and, the second, another one to be
-smoothed.
+The kernel takes in an array of facial elements' points' arrays and an array of
+jaw contours (both from the previous step) and gives out an array of elements'
+finished contours and an array of face fully contours; in other words,
+outputs are, the first, an array of contours to be sharped and, the second,
+another one to be smoothed.
 
 To understand the points numeration we should just see the following
 illustration:
@@ -358,18 +362,24 @@ based on two points in left and right eyecorners.
 
 As we can see, to minimize the frequency of memory allocations the
 `std::vector::reserve()` function is used; we can pass the real quantity of
-points to store in `cntEyeBottom` through the `capacity` argument if we know it
-apriory.
+points to be stored in `cntEyeBottom` through the `capacity` argument if we know
+it apriory.
 
-The rest of the function is parameters preparation for the `cv::ellipse2Poly()`
-function call.
+Why isn't memory allocated at the beginning of the `getEyeEllipse()` function?
+The reason is the `cv::ellipse2Poly()` feature: instead of just filling out the
+given array the function assigns to it an array of points created inside;
+therefore, there is no sense to allocate memory before `cv::ellipse2Poly()`
+call.
+
+The rest of the `getEyeEllipse()` function is parameters preparation for the
+`cv::ellipse2Poly()` function call.
 
 ![Ellipse2poly illustration](modules/imgproc/doc/pics/ellipse.svg)
 
 What is to be defined:
-- the ellipse center and the X axis counted by two eye Points;
-- the Y axis counted according to the assumption that an average eye width is 1/3
-of its length;
+- the ellipse center and the X half-axis counted by two eye Points;
+- the Y half-axis counted according to the assumption that an average eye width
+is 1/3 of its length;
 - the start and end angles which are 0 and 180 (see the picture above)
 - the angle delta: how frequently (which causes by how much points) the ellipse
 will be approximated;
@@ -379,12 +389,12 @@ will be approximated;
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp toDbl
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp ld_pp_incl
 
-The important thing is use of the `atan2()` function, which can return negative
-value depending on the `x` and `y` signs; this fact allows to get the right
-angle even in case of upside-down face arrangment (if we put the points in the
-right order, of course).
+The important thing is the use of the `atan2()` function, which can return
+negative value depending on the `x` and `y` signs; this fact allows to get the
+right angle even in case of upside-down face arrangment (if we put the points in
+the right order, of course).
 
-Back to the `getEyeEllipse` function, it returns a constructed `Contour`
+Back to the `getEyeEllipse()` function, it returns a constructed `Contour`
 to use the RVO.
 
 After the bottom side of an eye is approximated, we just push the eyebrow points
@@ -394,19 +404,65 @@ to the contour in the right order - and the eye is finished!
 
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_old.cpp ld_pp_mth
 
+We have four points of a mouth given: two of them in corners and two others in
+the middle of upper and lower lip. So the mouth can be approximated by two
+patched half-ellipses:
+
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp ld_pp_mth
+
+At this point Y half-axes are defined without any assumptions, but they are
+different for the upper lip and the lower one.
 
 #### Forehead contour getting {#gapi_fb_ld_fhd}
 
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_old.cpp ld_pp_fhd
 
+This snippet describes two actions: the approximation of a forehead by
+half-ellipse and pushing the jaw contour to the array in the appropriate order.
+
+The function to approximate a forehead:
+
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp ld_pp_fhd
+
+As we have only jaw points, we are trying to get a half-ellipse based on only
+three points of a jaw: the leftmost, the rightmost and the lowest. Obviously,
+the jaw width is equal to the forehead width and can be counted by the left and
+right points. What about the Y axis, we haven't points to get it directly;
+but, according to an assumption, the forehead height is about 2/3 of the jaw
+height, which can be received from the face center (the middle between the left
+and right points) and the lowest jaw point.
+
+We have all the counters needed! Let's draw masks now.
 
 ## Masks drawing {#gapi_fb_masks_drw}
 
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_old.cpp msk_ppline
 
+Honestly saying, there is no need to get the most accurate contours in the
+world: we can always blur borders by gaussian filter to occupy a bit more area.
+Another idea is to get three masks which are for bilateral-filtered image, for
+sharped image and for the untouched one and have no intersections with each
+other; this approach allows just to summarize images with the masks applied and
+get the output without any other operations:
+
+@snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_old.cpp msk_appl
+
+Thus, the steps to get the masks are:
+* fill the contours that should be sharpened;
+* blur that to get the "sharp" mask;
+* fill all the face contours fully;
+* blur that;
+* subtract areas which intersect with the "sharp" mask --- and get the
+"bilateral" mask;
+* now get the mask of all the area that shouldn't be touched by filters
+(background): add two previous masks, then set all non-zero pixels as 255
+(by `cv::gapi::threshold()`) and revert it (by `cv::gapi::bitwise_not`) to get
+the "untouched" mask.
+
 ## UnsharpMask() algorithm {#gapi_fb_unsh}
+
+The algorithm of `unsharpMask()` filter was implemented as described in this
+<a href="https://www.idtools.com.au/unsharp-masking-python-opencv/">article</a>.
 
 @snippet cpp/tutorial_code/gapi/face_beautification/face_beautification_stream.cpp unsh
 
@@ -436,3 +492,9 @@ detector.
 ### Research for the best parameters (used in GaussianBlur() or unsharpMask(), etc.) {#gapi_fb_res_params}
 
 ### Parameters autoscaling {#gapi_fb_auto}
+
+# Conclusion {#gapi_fb_cncl}
+
+The tutorial has two goals: to show the use of brand new features of OpenCV
+G-API module appeared in 4.2 release on living examples and to describe some
+ideas of implementing the certain CV algorithm.
