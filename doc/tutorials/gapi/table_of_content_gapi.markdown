@@ -24,8 +24,8 @@ how G-API module can be used for that.
 
     *Author:* Orest Chura
 
-    This is a tutorial where a computer vision algorithm (that includes an
-    inference of several networks and a videostream processing pipeline and can
-    be described as a graph) is implemented with G-API using provided features
-    such as Inference-API, Streaming-API and an implementation of custom G-API
-    kernels.
+    This is a tutorial where a Computer Vision/Deep Learning algorithm (that
+    includes an inference of several networks and a videostream processing
+    pipeline and can be described as a graph) is implemented with G-API using
+    provided features which allow, for instance, to infer topologies or to run
+    a G-API pipeline on a video stream.

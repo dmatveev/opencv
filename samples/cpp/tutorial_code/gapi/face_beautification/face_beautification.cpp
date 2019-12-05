@@ -272,7 +272,7 @@ GAPI_OCV_KERNEL(GCPURectangle, custom::GRectangle)
 // A face detector outputs a blob with the shape: [1, 1, N, 7], where N is
 //  the number of detected bounding boxes. Structure of an output for every
 //  detected face is the following:
-//  [image_id, label, conf, x_min, y_min, x_max, y_max]; all the seven elements
+//  [image_id, label, conf, x_min, y_min, x_max, y_max], all the seven elements
 //  are floating point. For more details please visit:
 // https://github.com/opencv/open_model_zoo/blob/master/intel_models/face-detection-adas-0001
 // This kernel is the face detection output blob parsing that returns a vector
@@ -300,14 +300,21 @@ GAPI_OCV_KERNEL(GCPUFacePostProc, GFacePostProc)
                 break;
             }
             const float faceConfidence = data[i * kObjectSize + 2];
+            // We can cut detections by the `conf` field
+            //  to avoid mistakes of the detector.
             if (faceConfidence > faceConfThreshold)
             {
                 const float left   = data[i * kObjectSize + 3];
                 const float top    = data[i * kObjectSize + 4];
                 const float right  = data[i * kObjectSize + 5];
                 const float bottom = data[i * kObjectSize + 6];
-                cv::Point tl(toIntRounded(left   * imgCols), toIntRounded(top    * imgRows));
-                cv::Point br(toIntRounded(right  * imgCols), toIntRounded(bottom * imgRows));
+                // These are normalized coordinates and are between 0 and 1;
+                //  to get the real pixel coordinates we should multiply it by
+                //  the image sizes respectively to the directions:
+                cv::Point tl(toIntRounded(left   * imgCols),
+                             toIntRounded(top    * imgRows));
+                cv::Point br(toIntRounded(right  * imgCols),
+                             toIntRounded(bottom * imgRows));
                 outFaces.push_back(cv::Rect(tl, br) & borders);
             }
         }
@@ -378,8 +385,8 @@ GAPI_OCV_KERNEL(GCPULandmPostProc, GLandmPostProc)
 //! [kern_m_impl]
 GAPI_OCV_KERNEL(GCPUGetContours, GGetContours)
 {
-    static void run(const std::vector<Landmarks> &vctPtsFaceElems,
-                    const std::vector<Contour>   &vctCntJaw,
+    static void run(const std::vector<Landmarks> &vctPtsFaceElems,  // 18 landmarks of the facial elements
+                    const std::vector<Contour>   &vctCntJaw,        // 17 landmarks of a jaw
                           std::vector<Contour>   &vctElemsContours,
                           std::vector<Contour>   &vctFaceContours)
     {
@@ -606,52 +613,40 @@ int main(int argc, char** argv)
     // Declaring a graph
     // The version of a pipeline expression with a lambda-based
     //  constructor is used to keep all temporary objects in a dedicated scope.
-//! [comp_str_1]
+//! [ppl]
     cv::GComputation pipeline([=]()
     {
 //! [net_usg_fd]
         cv::GMat  gimgIn;                                                                           // the input frame
-//! [comp_str_1]
-        cv::GMat  faceOut  = cv::gapi::infer<custom::FaceDetector>(gimgIn);                         // inference
+        cv::GMat  faceOut  = cv::gapi::infer<custom::FaceDetector>(gimgIn);
 //! [net_usg_fd]
         GArrayROI garRects = custom::GFacePostProc::on(faceOut, gimgIn, config::kConfThresh);       // post-processing
         cv::GArray<Landmarks> garElems;                                                             // |
         cv::GArray<Contour>   garJaws;                                                              // |the output arrays
 //! [net_usg_ld]
-        cv::GArray<cv::GMat> landmOut  = cv::gapi::infer<custom::LandmDetector>(garRects, gimgIn);  // inference
+        cv::GArray<cv::GMat> landmOut  = cv::gapi::infer<custom::LandmDetector>(garRects, gimgIn);
 //! [net_usg_ld]
         std::tie(garElems, garJaws)    = custom::GLandmPostProc::on(landmOut, garRects);            // post-processing
         cv::GArray<Contour> garElsConts;                                                            // face elements' contours
         cv::GArray<Contour> garFaceConts;                                                           // the whole faces' contours
-        std::tie(garElsConts, garFaceConts) = custom::GGetContours::on(garElems, garJaws);          // getting contours
-        // Masks drawing
-        // All masks are created as CV_8UC1
+        std::tie(garElsConts, garFaceConts) = custom::GGetContours::on(garElems, garJaws);
 //! [msk_ppline]
-        cv::GMat mskSharp        = custom::GFillPolyGContours::on(gimgIn,
-                                                                  garElsConts);
-        cv::GMat mskSharpG       = cv::gapi::gaussianBlur(mskSharp,
-                                                          config::kGKernelSize,
-                                                          config::kGSigma);
-        cv::GMat mskBlur         = custom::GFillPolyGContours::on(gimgIn,
-                                                                  garFaceConts);
-        cv::GMat mskBlurG        = cv::gapi::gaussianBlur(mskBlur,
-                                                          config::kGKernelSize,
-                                                          config::kGSigma);
-        // The first argument in mask() is Blur as we want to subtract from
-        // BlurG the next step:
-        cv::GMat mskBlurFinal    = mskBlurG - cv::gapi::mask(mskBlurG,
-                                                             mskSharpG);
-        cv::GMat mskFacesGaussed = mskBlurFinal + mskSharpG;
-        cv::GMat mskFacesWhite   = cv::gapi::threshold(mskFacesGaussed, 0, 255,
-                                                       cv::THRESH_BINARY);
-        cv::GMat mskNoFaces      = cv::gapi::bitwise_not(mskFacesWhite);
+        cv::GMat mskSharp        = custom::GFillPolyGContours::on(gimgIn, garElsConts);             // |
+        cv::GMat mskSharpG       = cv::gapi::gaussianBlur(mskSharp, config::kGKernelSize,           // |
+                                                          config::kGSigma);                         // |
+        cv::GMat mskBlur         = custom::GFillPolyGContours::on(gimgIn, garFaceConts);            // |
+        cv::GMat mskBlurG        = cv::gapi::gaussianBlur(mskBlur, config::kGKernelSize,            // |
+                                                          config::kGSigma);                         // |masks drawing
+        // The first argument in mask() is Blur as we want to subtract from                         // |
+        // BlurG the next step:                                                                     // |
+        cv::GMat mskBlurFinal    = mskBlurG - cv::gapi::mask(mskBlurG, mskSharpG);                  // |
+        cv::GMat mskFacesGaussed = mskBlurFinal + mskSharpG;                                        // |
+        cv::GMat mskFacesWhite   = cv::gapi::threshold(mskFacesGaussed, 0, 255, cv::THRESH_BINARY); // |
+        cv::GMat mskNoFaces      = cv::gapi::bitwise_not(mskFacesWhite);                            // |
 //! [msk_ppline]
-        cv::GMat gimgBilat       = custom::GBilatFilter::on(gimgIn,
-                                                            config::kBSize,
-                                                            config::kBSigmaCol,
-                                                            config::kBSigmaSp);
-        cv::GMat gimgSharp       = custom::unsharpMask(gimgIn,
-                                                       config::kUnshSigma,
+        cv::GMat gimgBilat       = custom::GBilatFilter::on(gimgIn, config::kBSize,
+                                                            config::kBSigmaCol, config::kBSigmaSp);
+        cv::GMat gimgSharp       = custom::unsharpMask(gimgIn, config::kUnshSigma,
                                                        config::kUnshStrength);
         // Applying the masks
         // Custom function mask3C() should be used instead of just gapi::mask()
@@ -659,18 +654,14 @@ int main(int argc, char** argv)
         cv::GMat gimgBilatMasked = custom::mask3C(gimgBilat, mskBlurFinal);
         cv::GMat gimgSharpMasked = custom::mask3C(gimgSharp, mskSharpG);
         cv::GMat gimgInMasked    = custom::mask3C(gimgIn,    mskNoFaces);
-//! [comp_str_2]
         cv::GMat gimgBeautif = gimgBilatMasked + gimgSharpMasked + gimgInMasked;                    // output #1
-//! [comp_str_2]
         // Drawing face boxes and landmarks if necessary:
         cv::GMat gimgTemp;
         if (flgLandmarks == true)
         {
-            cv::GMat gimgTemp2 = custom::GPolyLines::on(gimgIn, garFaceConts,
-                                                        config::kClosedLine,
+            cv::GMat gimgTemp2 = custom::GPolyLines::on(gimgIn, garFaceConts, config::kClosedLine,
                                                         config::kClrYellow);
-                     gimgTemp  = custom::GPolyLines::on(gimgTemp2, garElsConts,
-                                                        config::kClosedLine,
+                     gimgTemp  = custom::GPolyLines::on(gimgTemp2, garElsConts, config::kClosedLine,
                                                         config::kClrYellow);
         }
         else
@@ -678,12 +669,10 @@ int main(int argc, char** argv)
             gimgTemp = gimgIn;
         }
         cv::GMat gimgShow;
-//! [comp_str_3]
         if (flgBoxes == true)
         {
-            /*cv::GMat*/ gimgShow = custom::GRectangle::on(gimgTemp, garRects, config::kClrGreen);  // output #2
+            gimgShow = custom::GRectangle::on(gimgTemp, garRects, config::kClrGreen);                  // output #2
         }
-//! [comp_str_3]
         else
         {
         // This action is necessary because an output node must be a result of
@@ -691,10 +680,9 @@ int main(int argc, char** argv)
         //  when it should be nothing to draw
             gimgShow = cv::gapi::copy(gimgTemp);
         }
-//! [comp_str_4]
         return cv::GComputation(cv::GIn(gimgIn), cv::GOut(gimgBeautif, gimgShow));
     });
-//! [comp_str_4]
+//! [ppl]
     // Declaring IE params for networks
 //! [net_param]
     auto faceParams  = cv::gapi::ie::Params<custom::FaceDetector>
