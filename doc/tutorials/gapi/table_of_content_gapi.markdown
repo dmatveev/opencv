@@ -20,7 +20,7 @@ how G-API module can be used for that.
 
     *Languages:* C++
 
-    *Compatibility:* \> OpenCV 4.1.2
+    *Compatibility:* \> OpenCV 4.2
 
     *Author:* Orest Chura
 
