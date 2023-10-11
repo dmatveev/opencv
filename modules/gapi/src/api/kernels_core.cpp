@@ -413,6 +413,11 @@ GMat transpose(const GMat& src)
     return core::GTranspose::on(src);
 }
 
+GMat pad(const GMat &src, int top, int bot, int lef, int rig, const cv::Scalar &value)
+{
+    return core::GPad::on(src, top, bot, lef, rig, value);
+}
+
 GOpaque<Size> streaming::size(const GMat& src)
 {
     return streaming::GSize::on(src);

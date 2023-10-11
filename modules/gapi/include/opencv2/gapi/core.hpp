@@ -559,8 +559,20 @@ namespace core {
     };
 
     G_TYPED_KERNEL(GTranspose, <GMat(GMat)>, "org.opencv.core.transpose") {
-        static GMatDesc outMeta(GMatDesc in) {
+        static GMatDesc outMeta(const GMatDesc &in) {
             return in.withSize({in.size.height, in.size.width});
+        }
+    };
+
+    G_TYPED_KERNEL(GPad, <GMat(GMat,int,int,int,int,cv::Scalar)>, "org.opencv.core.pad") {
+        static GMatDesc outMeta(const GMatDesc &in,
+                                int top, int bot, int lef, int rig,
+                                const cv::Scalar&) {
+            GAPI_Assert(top >= 0);
+            GAPI_Assert(bot >= 0);
+            GAPI_Assert(lef >= 0);
+            GAPI_Assert(rig >= 0);
+            return in.withSizeDelta(lef + rig, bot + top);
         }
     };
 } // namespace core
@@ -1875,6 +1887,12 @@ The function transposes the matrix:
 */
 GAPI_EXPORTS_W GMat transpose(const GMat& src);
 
+/**
+ * @bried Pads input image
+ *
+ * @sa copyMakeBorder
+ */
+GAPI_EXPORTS_W GMat pad(const GMat &src, int top, int bot, int lef, int rig, const cv::Scalar &value);
 
 namespace streaming {
 /** @brief Gets dimensions from Mat.
