@@ -20,7 +20,7 @@ namespace ovcv
 {
 struct TensorNode {
     ov::Output<ov::Node> node;
-    cv::GMatDesc meta;
+    cv::GMetaArg meta; // FIXME: Untyped!!!
 };
 }
 
@@ -71,6 +71,11 @@ template<class T> struct ovcv_get_in;
 template<> struct ovcv_get_in<cv::GMat> {
     static const ::ovcv::TensorNode& get(GOVCVContext& ctx, int idx) {
         return ctx.inArg<::ovcv::TensorNode>(idx);
+    }
+};
+template<> struct ovcv_get_in<cv::GScalar> {
+    static const ::ovcv::TensorNode& get(GOVCVContext& ctx, int idx) {
+        return ctx.inArg<::ovcv::TensorNode>(idx); // Yes, it will be an ov::Tensor
     }
 };
 

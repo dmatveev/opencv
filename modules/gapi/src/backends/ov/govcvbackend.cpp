@@ -9,6 +9,8 @@
 #include "backends/ov/ovdef.hpp"
 #ifdef HAVE_OPENVINO_2_0
 
+#include <openvino/opsets/opset8.hpp> // Parameter
+
 #include <ade/util/algorithm.hpp>
 #include <ade/util/range.hpp>
 #include <ade/util/zip_range.hpp>
@@ -74,10 +76,12 @@ cv::gimpl::GOVCVExecutable::GOVCVExecutable(const ade::Graph& g,
                                             const std::vector<cv::gimpl::Data>& outs_data)
     : m_g(g), m_gm(m_g)
 {
-    auto is_op = [&](ade::NodeHandle nh) {
-        return m_gm.metadata(nh).get<NodeType>().t == NodeType::OP;
-    };
-    std::copy_if(nodes.begin(), nodes.end(), std::back_inserter(m_all_ops), is_op);
+    for (auto &&nh : nodes) {
+        switch (m_gm.metadata(nh).get<NodeType>().t) {
+        case NodeType::OP:   m_all_ops.push_back(nh); break;
+        case NodeType::DATA: m_all_data.push_back(nh); break;
+        }
+    }
     compile(ins_data, outs_data);
 }
 
@@ -104,10 +108,20 @@ ov::PartialShape shape_to_ov(const cv::GMatDesc &desc) {
 
 std::shared_ptr<ov::op::v0::Parameter> mkParam(const cv::gimpl::Data &data)
 {
-    GAPI_Assert(data.shape == cv::GShape::GMAT);
-    const cv::GMatDesc& desc = cv::util::get<cv::GMatDesc>(data.meta);
-    return std::make_shared<ov::op::v0::Parameter>
-        (type_to_ov(desc), shape_to_ov(desc));
+    switch (data.shape) {
+    case cv::GShape::GMAT: {
+        const cv::GMatDesc& desc = cv::util::get<cv::GMatDesc>(data.meta);
+        return std::make_shared<ov::op::v0::Parameter>
+            (type_to_ov(desc), shape_to_ov(desc));
+    } break;
+    case cv::GShape::GSCALAR: {
+        // FIXME: Assume scalar is always 3 channel U8
+        return std::make_shared<ov::op::v0::Parameter>
+            (ov::element::u8, ov::Shape{1,1,1,3});
+    } break;
+    default:
+        GAPI_Assert(false && "Unsupported parameter type");
+    }
 }
 
 void cv::gimpl::GOVCVExecutable::compile(const std::vector<cv::gimpl::Data>& ins_data,
@@ -123,9 +137,35 @@ void cv::gimpl::GOVCVExecutable::compile(const std::vector<cv::gimpl::Data>& ins
     for (auto &&it : ade::util::indexed(ins_data)) {
         auto &data = ade::util::value(it);
         auto param = mkParam(data);
-        m_res.slot<ov::Output<ov::Node> >()[data.rc] = param;
         ov_params.push_back(param);
-        m_param_remap[data.rc] = ade::util::index(it);
+
+        m_param_remap[PK{data.shape, data.rc}] = ade::util::index(it);
+        switch (data.shape) {
+        case GShape::GMAT:    m_mat_res.slot<ov::Output<ov::Node> >()[data.rc] = param; break;
+        case GShape::GSCALAR: m_sc_res .slot<ov::Output<ov::Node> >()[data.rc] = param; break;
+        default: GAPI_Assert(false && "Oh no");
+        }
+    }
+
+    // Also bind constant data right now, if there's any.
+    // Constant data becomes a compile-time tensor.
+    // FIXME: Probably we shouldn't force backends handle compile-time data
+    // out of the box.
+    for (auto &&nh : m_all_data) {
+        const auto &desc = m_gm.metadata(nh).get<Data>();
+        if (desc.storage == Data::Storage::CONST_VAL) {
+            GAPI_Assert(desc.shape == cv::GShape::GSCALAR);
+            const cv::Scalar s = cv::util::get<cv::Scalar>(m_gm.metadata(nh).get<ConstValue>().arg);
+            m_sc_res.slot<ov::Output<ov::Node> >()[desc.rc] =
+                std::make_shared<ov::opset8::Constant>
+                (ov::element::u8,
+                 ov::Shape{1,1,1,3}, // FIXME: Duplication with mkParam
+                 std::vector<uint8_t>{
+                     static_cast<uint8_t>(s[0]),
+                     static_cast<uint8_t>(s[1]),
+                     static_cast<uint8_t>(s[2])
+                 });
+        }
     }
 
     GConstGOVCVModel gcm(m_g);
@@ -154,7 +194,7 @@ void cv::gimpl::GOVCVExecutable::compile(const std::vector<cv::gimpl::Data>& ins
         {
             const auto out_port  = ade::util::index(out_it);
             const auto out_desc  = ade::util::value(out_it);
-            auto& out_output     = m_res.slot<ov::Output<ov::Node> >()[out_desc.id];
+            auto& out_output     = m_mat_res.slot<ov::Output<ov::Node> >()[out_desc.id];
             ctx.m_results[out_port] = GArg(&out_output);
         }
 
@@ -168,7 +208,9 @@ void cv::gimpl::GOVCVExecutable::compile(const std::vector<cv::gimpl::Data>& ins
     ov_results.reserve(outs_data.size());
     for (auto &&it : ade::util::indexed(outs_data)) {
         auto& data = ade::util::value(it);
-        auto  out  = m_res.slot<ov::Output<ov::Node> >().at(data.rc);
+        GAPI_Assert(data.shape == cv::GShape::GMAT);
+
+        auto  out  = m_mat_res.slot<ov::Output<ov::Node> >().at(data.rc);
         ov_results.push_back(std::make_shared<ov::op::v0::Result>(out));
         m_result_remap[data.rc] = ade::util::index(it);
     }
@@ -188,32 +230,33 @@ void cv::gimpl::GOVCVExecutable::compile(const std::vector<cv::gimpl::Data>& ins
     m_ov_req      = m_ov_compiled.create_infer_request();
 }
 
-cv::GArg cv::gimpl::GOVCVExecutable::packArg(const GArg &arg, const cv::GMetaArg &meta)
-{
+cv::GArg cv::gimpl::GOVCVExecutable::packArg(const GArg &arg, const cv::GMetaArg &meta) {
     GAPI_Assert( arg.kind != cv::detail::ArgKind::GMAT
               && arg.kind != cv::detail::ArgKind::GSCALAR
               && arg.kind != cv::detail::ArgKind::GARRAY
               && arg.kind != cv::detail::ArgKind::GOPAQUE);
-    if (arg.kind != cv::detail::ArgKind::GOBJREF)
-    {
+    if (arg.kind != cv::detail::ArgKind::GOBJREF) {
         // All other cases - pass as-is, with no transformations to GArg contents.
         return arg;
     }
     GAPI_Assert(arg.kind == cv::detail::ArgKind::GOBJREF);
 
     const cv::gimpl::RcDesc &ref = arg.get<cv::gimpl::RcDesc>();
-    switch (ref.shape)
-    {
-    case GShape::GMAT:
-    {
+    switch (ref.shape) {
+    case GShape::GMAT: {
         return GArg(::ovcv::TensorNode{
-                m_res.slot<ov::Output<ov::Node> >().at(ref.id),
-                cv::util::get<cv::GMatDesc>(meta)
+                m_mat_res.slot<ov::Output<ov::Node> >().at(ref.id),
+                meta,
             });
-    }
-    break;
+    } break;
+    case GShape::GSCALAR: {
+        return GArg(::ovcv::TensorNode{
+                m_sc_res.slot<ov::Output<ov::Node> >().at(ref.id),
+                meta,
+            });
+    } break;
     default:
-        util::throw_error(std::logic_error("Unsupported GShape type"));
+        util::throw_error(std::logic_error("packArg: Unsupported GShape type"));
         break;
     }
 }
@@ -226,19 +269,14 @@ void cv::gimpl::GOVCVExecutable::run(std::vector<InObj>  &&input_objs,
     for (auto& it : output_objs) bindOutArg(it.first, it.second);
 }
 
-void cv::gimpl::GOVCVExecutable::bindInArg(const RcDesc &rc, const GRunArg  &arg)
-{
-    switch (rc.shape)
-    {
-    case GShape::GMAT:
-    {
-        auto param_id = m_param_remap.at(rc.id);
+void cv::gimpl::GOVCVExecutable::bindInArg(const RcDesc &rc, const GRunArg  &arg) {
+    switch (rc.shape) {
+    case GShape::GMAT: {
+        auto param_id = m_param_remap.at(PK{rc.shape, rc.id});
         auto param_tr = m_ov_req.get_input_tensor(param_id);
 
-        switch (arg.index())
-        {
-        case GRunArg::index_of<cv::RMat>():
-        {
+        switch (arg.index()) {
+        case GRunArg::index_of<cv::RMat>(): {
             // The input (G-API) buffer we're reading from
             auto& rmat = cv::util::get<cv::RMat>(arg);
             auto  view = rmat.access(cv::RMat::Access::R);
@@ -250,15 +288,24 @@ void cv::gimpl::GOVCVExecutable::bindInArg(const RcDesc &rc, const GRunArg  &arg
                                  param_tr.data<std::uint8_t>(),
                                  steps[1]); // H stride as in HWC (WHY not NHWC??)
             omat.copyTo(ovmat);
-        }
-        break;
+        } break;
         default: util::throw_error(std::logic_error("No hope"));
         }
-    }
-    break;
+    } break;
+
+    case GShape::GSCALAR: {
+        auto param_id = m_param_remap.at(PK{rc.shape, rc.id});
+        auto param_tr = m_ov_req.get_input_tensor(param_id);
+
+        auto sc  = cv::util::get<cv::Scalar>(arg);
+        auto ptr = param_tr.data<std::uint8_t>();
+        ptr[0] = static_cast<uint8_t>(sc[0]);
+        ptr[1] = static_cast<uint8_t>(sc[1]);
+        ptr[2] = static_cast<uint8_t>(sc[2]);
+    } break;
 
     default:
-        util::throw_error(std::logic_error("Unsupported GShape type"));
+        util::throw_error(std::logic_error("bindIn: Unsupported GShape type"));
     }
 }
 

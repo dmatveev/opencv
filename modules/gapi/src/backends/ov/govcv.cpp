@@ -9,6 +9,7 @@
 #include <opencv2/gapi/core.hpp>
 #include <opencv2/gapi/imgproc.hpp>
 #include <opencv2/gapi/infer/ov.hpp> // ov::kernels()
+#include <opencv2/gapi/gcompoundkernel.hpp>
 #include "backends/ov/ovdef.hpp"
 
 #ifdef HAVE_OPENVINO_2_0
@@ -19,17 +20,19 @@
 
 #include "backends/ov/govcvkernel.hpp"
 
-GAPI_OVCV_KERNEL(GOVCVAdd, cv::gapi::core::GAdd)
-{
+////////////////////////////////////////////////////////////////////////////////
+
+GAPI_OVCV_KERNEL(GOVCVAdd, cv::gapi::core::GAdd) {
     static ov::Output<ov::Node>
         run(const ovcv::TensorNode &src1,
             const ovcv::TensorNode &src2,
-            int ddepth)
-    {
+            int ddepth) {
         return std::make_shared<ov::opset1::Add>(src1.node, src2.node);
         // FIXME: Support ddepth
     };
 };
+
+////////////////////////////////////////////////////////////////////////////////
 
 GAPI_OVCV_KERNEL(GOVCVMulCOld, cv::gapi::core::GMulCOld)
 {
@@ -49,6 +52,8 @@ GAPI_OVCV_KERNEL(GOVCVMulCOld, cv::gapi::core::GMulCOld)
         // FIXME: Support ddepth
     }
 };
+
+////////////////////////////////////////////////////////////////////////////////
 
 GAPI_OVCV_KERNEL(GOVCVResize, cv::gapi::imgproc::GResize) {
     static ov::Output<ov::Node>
@@ -89,6 +94,8 @@ GAPI_OVCV_KERNEL(GOVCVResize, cv::gapi::imgproc::GResize) {
     }
 };
 
+////////////////////////////////////////////////////////////////////////////////
+
 GAPI_OVCV_KERNEL(GOVCVSplit3, cv::gapi::core::GSplit3) {
     static std::tuple<ov::Output<ov::Node>, ov::Output<ov::Node>, ov::Output<ov::Node> >
         run(const ovcv::TensorNode &src) {
@@ -111,6 +118,8 @@ GAPI_OVCV_KERNEL(GOVCVMerge3, cv::gapi::core::GMerge3) {
     }
 };
 
+////////////////////////////////////////////////////////////////////////////////
+
 GAPI_OVCV_KERNEL(GOVCVConcatHor, cv::gapi::core::GConcatHor) {
     static ov::Output<ov::Node>
         run(const ovcv::TensorNode &a,
@@ -129,8 +138,102 @@ GAPI_OVCV_KERNEL(GOVCVConcatVert, cv::gapi::core::GConcatVert) {
     }
 };
 
-cv::GKernelPackage cv::gapi::ov::kernels()
-{
+////////////////////////////////////////////////////////////////////////////////
+
+// ..because OpenVINO can't pad with 3-ch value
+namespace local {
+G_API_OP(GPadPlane, <cv::GMat(cv::GMat,int,int,int,int,uint8_t)>, "org.opencv.core.padplane") {
+    static cv::GMatDesc outMeta(const cv::GMatDesc &in,
+                            int top, int bot, int lef, int rig,
+                            uint8_t) {
+        GAPI_Assert(top >= 0);
+        GAPI_Assert(bot >= 0);
+        GAPI_Assert(lef >= 0);
+        GAPI_Assert(rig >= 0);
+        return in.withSizeDelta(lef + rig, bot + top);
+    }
+};
+} // namespace local
+
+GAPI_OVCV_KERNEL(GOVCVPadPlane, local::GPadPlane) {
+    static ov::Output<ov::Node>
+        run(const ovcv::TensorNode &src,
+            int top, int bot, int lef, int rig,
+            uint8_t color) {
+        // Assume our image as NHWC tensor, then
+        // pads_begin is [  0, top, lef,  0]
+        // pads_end   is [  0, bot, rig,  0]
+        // constant   is [  1,   1,   1,  3]
+        auto pads_begin = std::make_shared<ov::opset8::Constant>
+            (ov::element::i32,
+             ov::Shape{4},
+             std::vector<int>{0, top, lef, 0});
+        auto pads_end = std::make_shared<ov::opset8::Constant>
+            (ov::element::i32,
+             ov::Shape{4},
+             std::vector<int>{0, bot, rig, 0});
+        auto pad_val = std::make_shared<ov::opset8::Constant>
+            (ov::element::u8,
+             ov::Shape{},
+             color);
+        return std::make_shared<ov::opset1::Pad>(src.node,
+                                                 pads_begin,
+                                                 pads_end,
+                                                 pad_val,
+                                                 ov::op::PadMode::CONSTANT);
+    }
+};
+
+GAPI_COMPOUND_KERNEL(GOVCVPad, cv::gapi::core::GPad) {
+    static cv::GMat expand(cv:: GMat in, int top, int bot, int lef, int rig, const cv::Scalar &color) {
+        cv::GMat b, g, r;
+        std::tie(b, g, r) = cv::gapi::split3(in);
+        using namespace local;
+        return cv::gapi::merge3(GPadPlane::on(b, top, bot, lef, rig, static_cast<uint8_t>(color[0])),
+                                GPadPlane::on(g, top, bot, lef, rig, static_cast<uint8_t>(color[1])),
+                                GPadPlane::on(r, top, bot, lef, rig, static_cast<uint8_t>(color[2])));
+    }
+};
+
+////////////////////////////////////////////////////////////////////////////////
+
+GAPI_OVCV_KERNEL(GOVCVCmpEQScalar, cv::gapi::core::GCmpEQScalar) {
+    static ov::Output<ov::Node>
+        run(const ovcv::TensorNode &src, const ovcv::TensorNode &color) {
+
+        GAPI_Assert(cv::util::get<cv::GMatDesc>(src.meta).chan == 3);
+
+        // Compare 3-el pixel (C) against 3-el Scalar (represented as tensor)
+        auto bin = std::make_shared<ov::opset1::Equal>(src.node, color.node);
+
+        // In OpenCV:   (rgb) == (rgb) = [0 or 255]
+        // In OpenVINO, (rgb) == (rgb) = [0 or 1]{3}
+        // Need to fold [0 or 1]{3} -> [0 or 1]
+        // [111 -> 255]
+        // [___ -> 0  ]
+        auto axis = std::make_shared<ov::opset8::Constant>
+            (ov::element::u8,
+             ov::Shape{},
+             3); // C in NHWC
+        auto fld = std::make_shared<ov::opset1::ReduceLogicalAnd>(bin, axis, true);
+        auto u8  = std::make_shared<ov::opset1::Convert>(fld, ov::element::u8);
+
+        // multiply [0,1] vector to [0,255] to follow OCV conventions
+        auto cval = std::make_shared<ov::opset8::Constant>
+            (ov::element::u8,
+             ov::Shape{1},
+             255);
+        auto mul = std::make_shared<ov::opset1::Multiply>(u8, cval);
+
+        // And even this is not the end. OpenCV assumes a 3ch result for 3ch input.
+        auto mmm = std::vector<ov::Output<ov::Node> >{mul, mul, mul};
+        return std::make_shared<ov::opset1::Concat>(mmm, 3); // C in NHWC
+    }
+};
+
+////////////////////////////////////////////////////////////////////////////////
+
+cv::GKernelPackage cv::gapi::ov::kernels() {
     return cv::gapi::kernels
         < GOVCVAdd
         , GOVCVMulCOld
@@ -139,13 +242,15 @@ cv::GKernelPackage cv::gapi::ov::kernels()
         , GOVCVMerge3
         , GOVCVConcatHor
         , GOVCVConcatVert
+        , GOVCVPadPlane
+        , GOVCVPad
+        , GOVCVCmpEQScalar
         >();
 }
 
 #else // HAVE_OPENVINO_2_0
 
-cv::GKernelPackage cv::gapi::ov::kernels()
-{
+cv::GKernelPackage cv::gapi::ov::kernels() {
     GAPI_Assert(false && "No OVCV kernels supported");
 }
 

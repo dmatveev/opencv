@@ -26,14 +26,12 @@
 
 namespace cv { namespace gimpl {
 
-struct OVCVUnit
-{
+struct OVCVUnit {
     static const char *name() { return "OVCVKernel"; }
     GOVCVKernel k;
 };
 
-class GOVCVExecutable final: public GIslandExecutable
-{
+class GOVCVExecutable final: public GIslandExecutable {
 public:
     GOVCVExecutable(const ade::Graph&                   graph,
                     const std::vector<ade::NodeHandle>& nodes,
@@ -41,8 +39,7 @@ public:
                     const std::vector<cv::gimpl::Data>& outs_data);
 
     virtual inline bool canReshape() const override { return false; }
-    virtual inline void reshape(ade::Graph&, const GCompileArgs&) override
-    {
+    virtual inline void reshape(ade::Graph&, const GCompileArgs&) override {
         util::throw_error(std::logic_error("GOVCVExecutable::reshape() should never be called"));
     }
 
@@ -67,9 +64,14 @@ private:
     GModel::ConstGraph m_gm;
 
     std::vector<ade::NodeHandle> m_all_ops;
+    std::vector<ade::NodeHandle> m_all_data;
 
-    using Mag = detail::magazine<ov::Output<ov::Node> >;
-    Mag m_res;
+     // FIXME: Different magazines since obj ids may collide for GMat and GScalar
+    using MatMag = detail::magazine<ov::Output<ov::Node> >;
+    MatMag m_mat_res;
+
+    using ScMag = detail::magazine<ov::Output<ov::Node> >;
+    ScMag m_sc_res;
 
     std::shared_ptr<ov::Model> m_ov_model;
     ov::CompiledModel m_ov_compiled;
@@ -77,9 +79,10 @@ private:
 
     // These two vectors define mapping between G-API Island inputs/outputs
     // and the synthesized OpenVINO model:
-    // - key: G-API's internal Resource ID
+    // - key: G-API's internal Resource ID (+ GShape if input - separate Mat/Scalar ids)
     // - val: Index of ov::Model Param/Result
-    std::unordered_map<std::size_t, std::size_t> m_param_remap;
+    using PK = std::pair<cv::GShape, std::size_t>;
+    std::map<PK,                    std::size_t> m_param_remap;   // FIXME: add hasher -> go unordered
     std::unordered_map<std::size_t, std::size_t> m_result_remap;
 };
 
