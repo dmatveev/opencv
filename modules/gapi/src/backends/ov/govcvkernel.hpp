@@ -16,6 +16,14 @@
 
 #ifdef HAVE_OPENVINO_2_0
 
+namespace ovcv
+{
+struct TensorNode {
+    ov::Output<ov::Node> node;
+    cv::GMatDesc meta;
+};
+}
+
 namespace cv
 {
 namespace gimpl
@@ -28,37 +36,26 @@ cv::gapi::GBackend backend();
 } // namespace ovcv
 } // namespace gimpl
 
-struct GOVCVContext
-{
+struct GOVCVContext {
     // Generic accessor API
     template<typename T>
     const T& inArg(int input) { return m_args.at(input).get<T>(); }
 
-    // Syntax sugar
-    const ov::Output<ov::Node>& inTensor(int input)
-    {
-        return inArg<ov::Output<ov::Node>>(input);
-    }
-
-    ov::Output<ov::Node>& outTensor(int output)
-    {
-        return *(m_results.at(output).get<ov::Output<ov::Node>*>());
-    }
+    template<typename T>
+    T* outArg(int output) { return m_results.at(output).get<T*>(); }
 
     std::vector<GArg> m_args;
     std::unordered_map<std::size_t, GArg> m_results;
 };
 
-class GOVCVKernel
-{
+class GOVCVKernel {
 public:
     using F = std::function<void(GOVCVContext &)>;
 
     GOVCVKernel() = default;
     explicit GOVCVKernel(const F& f) : m_f(f) {}
 
-    void apply(GOVCVContext &ctx) const
-    {
+    void apply(GOVCVContext &ctx) const {
         GAPI_Assert(m_f);
         m_f(ctx);
     }
@@ -71,45 +68,51 @@ namespace detail
 {
 
 template<class T> struct ovcv_get_in;
-template<> struct ovcv_get_in<cv::GMat>
-{
-    static const ov::Output<ov::Node>& get(GOVCVContext& ctx, int idx)
-    {
-        return ctx.inTensor(idx);
+template<> struct ovcv_get_in<cv::GMat> {
+    static const ::ovcv::TensorNode& get(GOVCVContext& ctx, int idx) {
+        return ctx.inArg<::ovcv::TensorNode>(idx);
     }
 };
 
-template<class T> struct ovcv_get_in
-{
-    static T get(GOVCVContext &ctx, int idx) { return ctx.inArg<T>(idx); }
+template<class T> struct ovcv_get_in {
+    static T get(GOVCVContext &ctx, int idx) {
+        return ctx.inArg<T>(idx);
+    }
 };
 
 template<class T> struct ovcv_get_out;
-template<> struct ovcv_get_out<cv::GMat>
-{
-    static ov::Output<ov::Node>& get(GOVCVContext& ctx, int idx)
-    {
-        return ctx.outTensor(idx);
+template<> struct ovcv_get_out<cv::GMat> {
+    static ov::Output<ov::Node>* get(GOVCVContext& ctx, int idx) {
+        return ctx.outArg<ov::Output<ov::Node> >(idx);
     }
 };
 
 template<typename, typename, typename>
 struct OVCVCallHelper;
 
+// Multi-output form
 template<typename Impl, typename... Ins, typename... Outs>
-struct OVCVCallHelper<Impl, std::tuple<Ins...>, std::tuple<Outs...> >
-{
+struct OVCVCallHelper<Impl, std::tuple<Ins...>, std::tuple<Outs...> > {
     template<int... IIs, int... OIs>
-    static void call_impl(GOVCVContext &ctx, detail::Seq<IIs...>, detail::Seq<OIs...>)
-    {
-        Impl::run(ovcv_get_in<Ins>::get(ctx, IIs)..., ovcv_get_out<Outs>::get(ctx, OIs)...);
+    static void call_impl(GOVCVContext &ctx, detail::Seq<IIs...>, detail::Seq<OIs...>) {
+        std::tie(*ovcv_get_out<Outs>::get(ctx, OIs)...) = Impl::run(ovcv_get_in<Ins>::get(ctx, IIs)...);
     }
-
-    static void call(GOVCVContext& ctx)
-    {
+    static void call(GOVCVContext& ctx) {
         call_impl(ctx,
                   typename detail::MkSeq<sizeof...(Ins)>::type(),
                   typename detail::MkSeq<sizeof...(Outs)>::type());
+    }
+};
+
+// Single-output form
+template<typename Impl, typename... Ins, typename Out>
+struct OVCVCallHelper<Impl, std::tuple<Ins...>, std::tuple<Out> > {
+    template<int... IIs>
+    static void call_impl(GOVCVContext &ctx, detail::Seq<IIs...>) {
+        *ovcv_get_out<Out>::get(ctx, 0) = Impl::run(ovcv_get_in<Ins>::get(ctx, IIs)...);
+    }
+    static void call(GOVCVContext& ctx) {
+        call_impl(ctx, typename detail::MkSeq<sizeof...(Ins)>::type());
     }
 };
 

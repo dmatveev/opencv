@@ -22,7 +22,8 @@
 #include "compiler/gmodel.hpp"
 
 #include "backends/ov/govcvbackend.hpp"
-#include "backends/ov/util.hpp"  // wrap::getCore()
+#include "backends/ov/govcvkernel.hpp" // ovcv::TensorNode
+#include "backends/ov/util.hpp"        // wrap::getCore()
 
 #include "api/gbackend_priv.hpp" // FIXME: Make it part of Backend SDK!
 
@@ -136,16 +137,17 @@ void cv::gimpl::GOVCVExecutable::compile(const std::vector<cv::gimpl::Data>& ins
     {
         const auto&  k = gcm.metadata(nh).get<OVCVUnit>().k;
         const auto& op = m_gm.metadata(nh).get<Op>();
+        const auto  mm = cv::gimpl::GModel::collectInputMeta(m_gm, nh);
 
         // Initialize Operation parameters:
         GOVCVContext ctx;
 
         // ..bind Inputs
         ctx.m_args.reserve(op.args.size());
-        using namespace std::placeholders;
-        ade::util::transform(op.args,
-            std::back_inserter(ctx.m_args),
-            std::bind(&GOVCVExecutable::packArg, this, _1));
+        for (auto &&it : ade::util::zip(ade::util::toRange(op.args),
+                                        ade::util::toRange(mm))) {
+            ctx.m_args.push_back(packArg(std::get<0>(it), std::get<1>(it)));
+        }
 
         // ..bind Outputs
         for (const auto &out_it : ade::util::indexed(op.outs))
@@ -186,7 +188,7 @@ void cv::gimpl::GOVCVExecutable::compile(const std::vector<cv::gimpl::Data>& ins
     m_ov_req      = m_ov_compiled.create_infer_request();
 }
 
-cv::GArg cv::gimpl::GOVCVExecutable::packArg(const GArg &arg)
+cv::GArg cv::gimpl::GOVCVExecutable::packArg(const GArg &arg, const cv::GMetaArg &meta)
 {
     GAPI_Assert( arg.kind != cv::detail::ArgKind::GMAT
               && arg.kind != cv::detail::ArgKind::GSCALAR
@@ -204,7 +206,10 @@ cv::GArg cv::gimpl::GOVCVExecutable::packArg(const GArg &arg)
     {
     case GShape::GMAT:
     {
-        return GArg(m_res.slot<ov::Output<ov::Node> >().at(ref.id));
+        return GArg(::ovcv::TensorNode{
+                m_res.slot<ov::Output<ov::Node> >().at(ref.id),
+                cv::util::get<cv::GMatDesc>(meta)
+            });
     }
     break;
     default:

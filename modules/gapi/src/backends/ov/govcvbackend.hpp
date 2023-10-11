@@ -61,7 +61,7 @@ private:
     // (w.r.t. device and plugin configuration)
     void initConfig();
 
-    GArg packArg(const GArg &arg);
+    GArg packArg(const GArg &arg, const GMetaArg &meta);
 
     const ade::Graph &m_g;
     GModel::ConstGraph m_gm;
