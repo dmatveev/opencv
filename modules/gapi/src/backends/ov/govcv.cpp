@@ -199,35 +199,66 @@ GAPI_COMPOUND_KERNEL(GOVCVPad, cv::gapi::core::GPad) {
 
 GAPI_OVCV_KERNEL(GOVCVCmpEQScalar, cv::gapi::core::GCmpEQScalar) {
     static ov::Output<ov::Node>
-        run(const ovcv::TensorNode &src, const ovcv::TensorNode &color) {
+        run(const ovcv::TensorNode &src, const ovcv::TensorNode &scalar) {
 
-        GAPI_Assert(cv::util::get<cv::GMatDesc>(src.meta).chan == 3);
-
-        // Compare 3-el pixel (C) against 3-el Scalar (represented as tensor)
-        auto bin = std::make_shared<ov::opset1::Equal>(src.node, color.node);
-
-        // In OpenCV:   (rgb) == (rgb) = [0 or 255]
-        // In OpenVINO, (rgb) == (rgb) = [0 or 1]{3}
-        // Need to fold [0 or 1]{3} -> [0 or 1]
-        // [111 -> 255]
-        // [___ -> 0  ]
-        auto axis = std::make_shared<ov::opset8::Constant>
-            (ov::element::u8,
+        // OpenCV specifics now. Believe or not, its cv::compare(mat,scalar)
+        // takes just 1 compoment from scalar to compare the image against.
+        // It is not BGR-BGR comparison, it is BGR-Const comparison.
+        // As we're fed with 3-channel (in fact, 4-channel) Scalars frost,
+        // we need to extract this first element here to make the comparison.
+        // Needless to say the image has to be decomposed at the user side in
+        // three channels to amke three channel comparison.
+        auto extract = std::make_shared<ov::opset8::Constant>
+            (ov::element::i32,
              ov::Shape{},
-             3); // C in NHWC
-        auto fld = std::make_shared<ov::opset1::ReduceLogicalAnd>(bin, axis, true);
-        auto u8  = std::make_shared<ov::opset1::Convert>(fld, ov::element::u8);
+             3); // split over C in NHWC
+        auto element = std::make_shared<ov::opset1::Split>(scalar.node, extract, 3)->output(0);
+
+        // NPU specifics start here: {{{
+        // EQ can't into u8 there
+        auto i32_img = std::make_shared<ov::opset1::Convert>(src.node, ov::element::i32);
+        auto i32_col = std::make_shared<ov::opset1::Convert>(element,  ov::element::i32);
+        // NPU specifics end here: }}}
+
+        // Actually run Compare, get [[ov_bool]] (which is still u8 insight)
+        auto bin = std::make_shared<ov::opset1::Equal>(i32_img, i32_col);
+
+        // NPU specifics start here: {{{
+        // On CPU and GPU it can be u8
+        auto i32  = std::make_shared<ov::opset1::Convert>(bin, ov::element::i32);
 
         // multiply [0,1] vector to [0,255] to follow OCV conventions
         auto cval = std::make_shared<ov::opset8::Constant>
-            (ov::element::u8,
+            (ov::element::i32,
              ov::Shape{1},
              255);
-        auto mul = std::make_shared<ov::opset1::Multiply>(u8, cval);
+        auto mul = std::make_shared<ov::opset1::Multiply>(i32, cval);
+        auto out = std::make_shared<ov::opset1::Convert>(mul, ov::element::u8);
+        // NPU specifics ends here: }}}
+        return out;
+    }
+};
 
-        // And even this is not the end. OpenCV assumes a 3ch result for 3ch input.
-        auto mmm = std::vector<ov::Output<ov::Node> >{mul, mul, mul};
-        return std::make_shared<ov::opset1::Concat>(mmm, 3); // C in NHWC
+////////////////////////////////////////////////////////////////////////////////
+
+GAPI_OVCV_KERNEL(GOVCVAnd, cv::gapi::core::GAnd) {
+    static ov::Output<ov::Node>
+        run(const ovcv::TensorNode &a, const ovcv::TensorNode &b) {
+        return std::make_shared<ov::opset1::LogicalAnd>(a.node, b.node);
+    }
+};
+
+GAPI_OVCV_KERNEL(GOVCVOr, cv::gapi::core::GOr) {
+    static ov::Output<ov::Node>
+        run(const ovcv::TensorNode &a, const ovcv::TensorNode &b) {
+        return std::make_shared<ov::opset1::LogicalOr>(a.node, b.node);
+    }
+};
+
+GAPI_OVCV_KERNEL(GOVCVNot, cv::gapi::core::GNot) {
+    static ov::Output<ov::Node>
+        run(const ovcv::TensorNode &a) {
+        return std::make_shared<ov::opset1::LogicalNot>(a.node);
     }
 };
 
@@ -245,6 +276,9 @@ cv::GKernelPackage cv::gapi::ov::kernels() {
         , GOVCVPadPlane
         , GOVCVPad
         , GOVCVCmpEQScalar
+        // , GOVCVAnd
+        // , GOVCVOr
+        // , GOVCVNot
         >();
 }
 
