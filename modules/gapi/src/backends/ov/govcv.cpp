@@ -20,6 +20,23 @@
 
 #include "backends/ov/govcvkernel.hpp"
 
+namespace {
+namespace util {
+
+ov::Output<ov::Node> ovBinaryToOCVGray(const ov::Output<ov::Node> &in) {
+    auto i32  = std::make_shared<ov::opset1::Convert>(in, ov::element::i32);
+
+    // multiply [0,1] vector to [0,255] to follow OCV conventions
+    auto cval = std::make_shared<ov::opset8::Constant>
+        (ov::element::i32,
+         ov::Shape{1},
+         255);
+    auto mul = std::make_shared<ov::opset1::Multiply>(i32, cval);
+    return std::make_shared<ov::opset1::Convert>(mul, ov::element::u8);
+}
+
+}} // namespace <anonymous>::util
+
 ////////////////////////////////////////////////////////////////////////////////
 
 GAPI_OVCV_KERNEL(GOVCVAdd, cv::gapi::core::GAdd) {
@@ -186,12 +203,16 @@ GAPI_OVCV_KERNEL(GOVCVPadPlane, local::GPadPlane) {
 
 GAPI_COMPOUND_KERNEL(GOVCVPad, cv::gapi::core::GPad) {
     static cv::GMat expand(cv:: GMat in, int top, int bot, int lef, int rig, const cv::Scalar &color) {
+        // Need to pad planes with individual colors. In OpenVINO,
+        // only one constant value can be assigned, so have to
+        // decompose in channels & compose back
         cv::GMat b, g, r;
         std::tie(b, g, r) = cv::gapi::split3(in);
+        auto pp = [=](cv::GMat plane, double value) {
+            return local::GPadPlane::on(plane, top, bot, lef, rig, static_cast<uint8_t>(value));
+        };
         using namespace local;
-        return cv::gapi::merge3(GPadPlane::on(b, top, bot, lef, rig, static_cast<uint8_t>(color[0])),
-                                GPadPlane::on(g, top, bot, lef, rig, static_cast<uint8_t>(color[1])),
-                                GPadPlane::on(r, top, bot, lef, rig, static_cast<uint8_t>(color[2])));
+        return cv::gapi::merge3(pp(b, color[0]), pp(g, color[1]), pp(r, color[2]));
     }
 };
 
@@ -214,51 +235,67 @@ GAPI_OVCV_KERNEL(GOVCVCmpEQScalar, cv::gapi::core::GCmpEQScalar) {
              3); // split over C in NHWC
         auto element = std::make_shared<ov::opset1::Split>(scalar.node, extract, 3)->output(0);
 
-        // NPU specifics start here: {{{
+        // Specifics start here: {{{
         // EQ can't into u8 there
         auto i32_img = std::make_shared<ov::opset1::Convert>(src.node, ov::element::i32);
-        auto i32_col = std::make_shared<ov::opset1::Convert>(element,  ov::element::i32);
-        // NPU specifics end here: }}}
+        auto i32_val = std::make_shared<ov::opset1::Convert>(element,  ov::element::i32);
+        // Specifics end here: }}}
 
-        // Actually run Compare, get [[ov_bool]] (which is still u8 insight)
-        auto bin = std::make_shared<ov::opset1::Equal>(i32_img, i32_col);
-
-        // NPU specifics start here: {{{
-        // On CPU and GPU it can be u8
-        auto i32  = std::make_shared<ov::opset1::Convert>(bin, ov::element::i32);
-
-        // multiply [0,1] vector to [0,255] to follow OCV conventions
-        auto cval = std::make_shared<ov::opset8::Constant>
-            (ov::element::i32,
-             ov::Shape{1},
-             255);
-        auto mul = std::make_shared<ov::opset1::Multiply>(i32, cval);
-        auto out = std::make_shared<ov::opset1::Convert>(mul, ov::element::u8);
-        // NPU specifics ends here: }}}
-        return out;
+        // Actually run Compare, get BOOL tensor (which is still u8 in OpenVINO)
+        auto bin = std::make_shared<ov::opset1::Equal>(i32_img, i32_val);
+        return util::ovBinaryToOCVGray(bin);
     }
 };
 
 ////////////////////////////////////////////////////////////////////////////////
 
-GAPI_OVCV_KERNEL(GOVCVAnd, cv::gapi::core::GAnd) {
+GAPI_OVCV_KERNEL(GOVCVInRange, cv::gapi::core::GInRange) {
     static ov::Output<ov::Node>
-        run(const ovcv::TensorNode &a, const ovcv::TensorNode &b) {
-        return std::make_shared<ov::opset1::LogicalAnd>(a.node, b.node);
+        run(const ovcv::TensorNode &src,
+            const ovcv::TensorNode &lo,
+            const ovcv::TensorNode &hi) {
+        // With OpenVINO opset, InRange is:
+        // 1) a = src >= lo;    % a is [BOOL]
+        // 2) b = src <= hi;    % b is [BOOL]
+        // 3) c = a & b;        % c is [BOOL]
+        // 4) d = reduce(c,&)   $ d is [BOOL]
+        // 5) e = bin2gray(e)   $ e is [u8], 0..255
+        auto cmp_lo  = std::make_shared<ov::opset1::GreaterEqual>(src.node, lo.node);
+        auto cmp_hi  = std::make_shared<ov::opset1::LessEqual>(src.node, hi.node);
+        auto cmp_bgr = std::make_shared<ov::opset1::LogicalAnd>(cmp_lo, cmp_hi);
+
+        auto and_axs = std::make_shared<ov::opset8::Constant>
+            (ov::element::i32,
+             ov::Shape{},
+             3); // C in NHWC
+        auto cmp_gry = std::make_shared<ov::opset1::ReduceLogicalAnd>(cmp_bgr, and_axs, true);
+        return util::ovBinaryToOCVGray(cmp_gry);
     }
 };
 
-GAPI_OVCV_KERNEL(GOVCVOr, cv::gapi::core::GOr) {
-    static ov::Output<ov::Node>
-        run(const ovcv::TensorNode &a, const ovcv::TensorNode &b) {
-        return std::make_shared<ov::opset1::LogicalOr>(a.node, b.node);
-    }
-};
+////////////////////////////////////////////////////////////////////////////////
 
-GAPI_OVCV_KERNEL(GOVCVNot, cv::gapi::core::GNot) {
+GAPI_OVCV_KERNEL(GOVCVMask, cv::gapi::core::GMask) {
     static ov::Output<ov::Node>
-        run(const ovcv::TensorNode &a) {
-        return std::make_shared<ov::opset1::LogicalNot>(a.node);
+        run(const ovcv::TensorNode &src,
+            const ovcv::TensorNode &mask) {
+        // OCV mask tensor is grayscale.
+        // Need to convert it to 0..1 range and multiply
+
+        GAPI_Assert(cv::util::get<cv::GMatDesc>(src.meta).chan == 3);
+
+        // be 4-dim - see the ovcv example pipeline for details.
+        auto zero = std::make_shared<ov::opset8::Constant>
+            (ov::element::u8,
+             ov::Shape{},
+             0);
+        auto mbin = std::make_shared<ov::opset1::Greater>(mask.node, zero);
+        auto mu8  = std::make_shared<ov::opset1::Convert>(mbin, ov::element::u8);
+
+        // Need to broadcast the binary mask to three channels...
+        auto mu8p = std::vector<ov::Output<ov::Node> >{mu8, mu8, mu8};
+        auto mu83 = std::make_shared<ov::opset1::Concat>(mu8p, 3); // C in NHWC
+        return std::make_shared<ov::opset1::Multiply>(src.node, mu83);
     }
 };
 
@@ -276,9 +313,8 @@ cv::GKernelPackage cv::gapi::ov::kernels() {
         , GOVCVPadPlane
         , GOVCVPad
         , GOVCVCmpEQScalar
-        // , GOVCVAnd
-        // , GOVCVOr
-        // , GOVCVNot
+        , GOVCVInRange
+        , GOVCVMask
         >();
 }
 

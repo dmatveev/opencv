@@ -1,10 +1,6 @@
-#include <algorithm>
 #include <iostream>
-#include <cctype>
-
 #include <opencv2/gapi.hpp>
 #include <opencv2/gapi/core.hpp>
-#include <opencv2/gapi/operators.hpp>
 #include <opencv2/gapi/infer/ov.hpp>
 #include <opencv2/gapi/fluid/core.hpp>
 #include <opencv2/gapi/streaming/cap.hpp>
@@ -17,8 +13,7 @@ const std::string keys =
     "{ i input   |  | Path to the input video file }"
     "{ l overlay |  | Path to the overlay video file }";
 
-int main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]) {
     cv::CommandLineParser cmd(argc, argv, keys);
     cmd.about(about);
     if (cmd.has("help")) {
@@ -27,7 +22,8 @@ int main(int argc, char *argv[])
     }
     const std::string input_path = cmd.get<std::string>("input");
     const std::string ovlay_path = cmd.get<std::string>("overlay");
-    const cv::Scalar  CHROMAKEY  = cv::Scalar(27,214,43);
+    const cv::Scalar  CHROMAKEY  = cv::Scalar(30,250,50);
+    const cv::Scalar  CHROMALOW  = cv::Scalar(0 ,100, 0);
     const cv::Size    OUTSZ      = cv::Size( 853, 480);
     const cv::Size    OVLSZ      = cv::Size( 320, 240);
 
@@ -40,17 +36,13 @@ int main(int argc, char *argv[])
     const int ext_rgt = OUTSZ.width  - OVLSZ.width;
     cv::GMat over_image = cv::gapi::pad(over_patch, add_top, 0, 0, ext_rgt, CHROMAKEY);
 
-    // Create base and overlay mask. In OpenCV compare needs to be
-    // called per-channel...
-    cv::GMat bp, gp, rp;
-    std::tie(bp, gp, rp) = cv::gapi::split3(over_image);
-    cv::GMat bm = bp == cv::GScalar(CHROMAKEY[0]);
-    cv::GMat gm = gp == cv::GScalar(CHROMAKEY[1]);
-    cv::GMat rm = rp == cv::GScalar(CHROMAKEY[2]);
-    cv::GMat gray_mask = bm & gm & rm;
-    cv::GMat base_mask = cv::gapi::merge3(gray_mask, gray_mask, gray_mask);
+    cv::GMat base_mask = cv::gapi::inRange(over_image,
+                                           cv::GScalar(CHROMALOW),
+                                           cv::GScalar(CHROMAKEY));
     cv::GMat over_mask = cv::gapi::bitwise_not(base_mask);
-    cv::GMat out = (base_image & base_mask) | (over_image & over_mask);
+
+    cv::GMat out = cv::gapi::mask(base_image, base_mask)
+                 + cv::gapi::mask(over_image, over_mask);
 
     try {
         auto pipeline = cv::GComputation(cv::GIn(input, overlay), cv::GOut(out))
